@@ -1,3 +1,6 @@
+import { DailyReportCodes } from 'src/constants/const'
+import { TaskProps } from './tasks'
+
 export interface Reports {
   id: number
   name: string
@@ -6,3 +9,25 @@ export interface Reports {
   date: Date
   projectId: number
 }
+
+export interface ReportProps {
+  id: string
+  title: string
+  createdTime: string
+  begindate: string
+  [DailyReportCodes.project]: number
+  [DailyReportCodes.taskId]: string
+  [DailyReportCodes.timeSpent]: string
+  [DailyReportCodes.title]: string
+  [DailyReportCodes.activityType]: number
+  [DailyReportCodes.parentId]: number
+  assignedById: string
+  lastActivityTime: string
+}
+
+export type TaskWithTimeSpent = TaskProps & {
+  timeSpent: number
+  reports: ReportProps[]
+}
+
+export type GroupedTasksWithTimeSpent = Record<string, TaskWithTimeSpent[]>

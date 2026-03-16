@@ -9,6 +9,15 @@ export enum TaskCodes {
   sprintDateStart = 'ufCrm14_1771510367281',
 }
 
+export enum DailyReportCodes {
+  title = 'ufCrm11_1770627903531',
+  timeSpent = 'ufCrm11_1770627880479',
+  taskId = 'ufCrm11_1770627808462',
+  project = 'ufCrm11_1772012010',
+  activityType = 'ufCrm11_1770804288638',
+  parentId = 'parentId1072',
+}
+
 export const Endpoints = {
   tasks: 'tasks.task.list',
   groups: 'sonet_group.get',
@@ -41,4 +50,5 @@ export const TASK_SELECT_FIELDS = [
   TaskCodes.comment,
   TaskCodes.reportDate,
   TaskCodes.timeSpent,
+  TaskCodes.sprintDateStart,
 ] as const

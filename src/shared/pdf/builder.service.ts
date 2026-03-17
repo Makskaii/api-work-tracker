@@ -29,7 +29,7 @@ export class HtmlBuilderService {
     watermarkUrl,
   }: BuildReportParams) {
     const sortedDates = Object.keys(groupedTasks).sort(
-      (a, b) => dayjs(a).valueOf() - dayjs(b).valueOf(),
+      (a, b) => dayjs(b).valueOf() - dayjs(a).valueOf(),
     )
 
     const summaryTableHtml = summaryRows
@@ -244,17 +244,21 @@ export class HtmlBuilderService {
 
             .date-section {
               margin-top: 14px;
-              page-break-inside: avoid;
+              break-inside: auto;
+              page-break-inside: auto;
             }
 
             .date-subtitle {
               font-weight: 700;
               font-size: 14px;
               margin-bottom: 10px;
+              break-after: avoid;
+              page-break-after: avoid;
             }
 
             .task-entry {
               margin-bottom: 14px;
+              break-inside: avoid;
               page-break-inside: avoid;
             }
 
@@ -315,7 +319,7 @@ export class HtmlBuilderService {
 
                 <ol class="sub-list">
                   <li>
-                    <strong color: "rgb(60, 134, 140)">Период и назначение документа</strong>
+                   <strong style="color: rgb(60, 134, 140)"> Период и назначение документа</strong>
                     <p class="paragraph">
                       Документ отражает перечень задач ${this.escapeHtml(
                         departmentTitle.toLowerCase(),

@@ -1,23 +1,23 @@
 import { Injectable, NotFoundException } from '@nestjs/common'
+import { randomUUID } from 'crypto'
+import dayjs from 'dayjs'
+import fs from 'fs'
+import path from 'path'
 import {
   DailyReportCodes,
   EntityTypeIds,
   TASK_SELECT_FIELDS,
   TaskCodes,
 } from 'src/constants/const'
-import dayjs from 'dayjs'
-import { TaskProps } from 'src/types/tasks'
+import { BitrixService } from 'src/shared/integrations/bitrix/bitrix.service'
 import { HtmlBuilderService } from 'src/shared/pdf/builder.service'
 import { PdfService } from 'src/shared/pdf/pdf.service'
-import { randomUUID } from 'crypto'
-import { BitrixService } from 'src/shared/integrations/bitrix/bitrix.service'
-import path from 'path'
-import fs from 'fs'
 import {
   GroupedTasksWithTimeSpent,
   ReportProps,
   TaskWithTimeSpent,
 } from 'src/types/reports'
+import { TaskProps } from 'src/types/tasks'
 
 type PreparedReport = {
   buffer: Buffer
@@ -115,8 +115,6 @@ export class DocRecordsService {
       },
     )
 
-    console.log({ tasks })
-
     const normalizedTasks = Array.isArray(tasks) ? tasks : []
     const taskIds = normalizedTasks.map((task) => String(task.id))
 
@@ -125,7 +123,7 @@ export class DocRecordsService {
       startDate,
       end,
     )
-    console.log({ reportsMap })
+
     const tasksWithTimeSpent: TaskWithTimeSpent[] = normalizedTasks.map(
       (task) => {
         const taskId = String(task.id)

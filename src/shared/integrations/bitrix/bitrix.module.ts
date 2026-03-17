@@ -1,14 +1,18 @@
 import { Module } from '@nestjs/common'
 import { HttpModule } from '@nestjs/axios'
+import { ConfigModule, ConfigService } from '@nestjs/config'
 import { BitrixService } from './bitrix.service'
-
-const { API_URL } = process.env
 
 @Module({
   imports: [
-    HttpModule.register({
-      baseURL: API_URL,
-      timeout: 5000,
+    ConfigModule,
+    HttpModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        baseURL: configService.get<string>('API_URL'),
+        timeout: 15000,
+      }),
     }),
   ],
   providers: [BitrixService],

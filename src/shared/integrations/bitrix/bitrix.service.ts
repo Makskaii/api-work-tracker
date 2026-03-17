@@ -1,10 +1,8 @@
-import { Injectable } from '@nestjs/common'
 import { HttpService } from '@nestjs/axios'
+import { Injectable } from '@nestjs/common'
 import { firstValueFrom } from 'rxjs'
 import { Endpoints } from 'src/constants/const'
 import { AnyObject } from 'src/types/types'
-import { TaskProps } from 'src/types/tasks'
-import { ReportProps } from 'src/types/reports'
 
 @Injectable()
 export class BitrixService {

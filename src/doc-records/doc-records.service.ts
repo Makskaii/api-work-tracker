@@ -56,32 +56,11 @@ export class DocRecordsService {
     return 0
   }
 
-  private getSprintStartValue(task: TaskProps): string | null {
-    const sprintStartValue = (task as unknown as Record<string, unknown>)[
-      TaskCodes.sprintDateStart
-    ]
-
-    if (Array.isArray(sprintStartValue)) {
-      const firstValue = sprintStartValue[0]
-      return typeof firstValue === 'string' ? firstValue : null
-    }
-
-    if (typeof sprintStartValue === 'string') {
-      return sprintStartValue
-    }
-
-    return null
-  }
-
   private async getReportsMapByTaskIds(
     taskIds: string[],
     start: string,
     end: string,
   ) {
-    if (!taskIds.length) {
-      return {}
-    }
-
     const reportSelectFields = [
       'id',
       'title',
@@ -99,14 +78,15 @@ export class DocRecordsService {
 
     const reportsResponses = await Promise.all(
       taskIds.map((taskId) =>
-        this.bitrixService.listItems<ReportProps>(EntityTypeIds.reports, {
-          select: reportSelectFields,
-          filter: {
+        this.bitrixService.listItems<ReportProps>(
+          EntityTypeIds.reports,
+          reportSelectFields,
+          {
             [DailyReportCodes.parentId]: taskId,
             '>=begindate': start,
             '<=begindate': end,
           },
-        }),
+        ),
       ),
     )
 
@@ -124,20 +104,14 @@ export class DocRecordsService {
 
     const startDate = dayjs(start).subtract(7, 'day').format('YYYY-MM-DD')
 
-    const taskSelectFields = Array.from(
-      new Set([...TASK_SELECT_FIELDS, TaskCodes.sprintDateStart]),
-    )
-
     const tasks = await this.bitrixService.listItems<TaskProps>(
       EntityTypeIds.tasks,
+      TASK_SELECT_FIELDS,
       {
-        select: taskSelectFields,
-        filter: {
-          [`>=${TaskCodes.sprintDateStart}`]: startDate,
-          [`<=${TaskCodes.sprintDateStart}`]: end,
-          stageId: 'DT1072_18:UC_6JNSDG',
-          [TaskCodes.project]: projId,
-        },
+        [`>=${TaskCodes.sprintDateStart}`]: startDate,
+        [`<=${TaskCodes.sprintDateStart}`]: end,
+        stageId: 'DT1072_18:UC_6JNSDG',
+        [TaskCodes.project]: projId,
       },
     )
 
@@ -187,26 +161,19 @@ export class DocRecordsService {
       0,
     )
 
-    const firstWeekBoundary = dayjs(startDate).add(7, 'day')
+    const firstWeekEnd = dayjs(startDate).add(7, 'day').format('YYYY-MM-DD')
 
     const firstWeekSpent = tasksWithTimeSpent
-      .filter((task) => {
-        const sprintStart = this.getSprintStartValue(task)
-
-        return sprintStart
-          ? dayjs(sprintStart).isBefore(firstWeekBoundary, 'day')
-          : false
-      })
+      .filter((task) =>
+        dayjs(task[TaskCodes.sprintDateStart]).isBefore(dayjs(firstWeekEnd)),
+      )
       .reduce((sum, task) => sum + task.timeSpent, 0)
 
     const secondWeekSpent = tasksWithTimeSpent
-      .filter((task) => {
-        const sprintStart = this.getSprintStartValue(task)
-
-        return sprintStart
-          ? !dayjs(sprintStart).isBefore(firstWeekBoundary, 'day')
-          : false
-      })
+      .filter(
+        (task) =>
+          !dayjs(task[TaskCodes.sprintDateStart]).isBefore(dayjs(firstWeekEnd)),
+      )
       .reduce((sum, task) => sum + task.timeSpent, 0)
 
     const logoBase64 = this.getImageBase64('public/docsLogo/logo.jpg')

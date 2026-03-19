@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common'
 import { AppController } from './app.controller'
 import { AppService } from './app.service'
 import { DocRecordsModule } from './doc-records/doc-records.module'
-import { UserSprintsModule } from './user-sprints/user-sprints.module';
 
 @Module({
   imports: [
@@ -19,7 +18,6 @@ import { UserSprintsModule } from './user-sprints/user-sprints.module';
     // }),
     // EmployeeModule,
     DocRecordsModule,
-    UserSprintsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -1,35 +1,17 @@
 import { Injectable } from '@nestjs/common'
 import dayjs from 'dayjs'
-import { ActivityType, DtoFieldsDailyReports } from 'src/constants/const'
+import { DailyReportCodes } from 'src/constants/const'
+import { UserInfo } from 'src/types/bitrix'
+import { ReportProps } from 'src/types/reports'
 import {
-  BitrixService,
-  BitrixUser,
-} from '../shared/integrations/bitrix/bitrix.service'
+  ActivitiesMap,
+  ActivityType,
+  SprintEmployeeStatsResponse,
+} from 'src/types/user-sprints'
+import { BitrixService } from '../shared/integrations/bitrix/bitrix.service'
 
 const FULL_SPRINT_AVAILABLE_TIME = 40
 const HOURS_PER_DAY = 6
-
-type ActivitiesMap = {
-  [ActivityType.development]: number
-  [ActivityType.clientCall]: number
-  [ActivityType.analitycsCall]: number
-  [ActivityType.dash]: number
-  [ActivityType.devsCall]: number
-}
-
-export type SprintEmployeeStatsResponse = {
-  id: string
-  title: string
-  availableTime: number
-  timeSpent: number
-  effectivity: string
-  comment: string
-  [ActivityType.development]: number
-  [ActivityType.clientCall]: number
-  [ActivityType.analitycsCall]: number
-  [ActivityType.dash]: number
-  [ActivityType.devsCall]: number
-}
 
 @Injectable()
 export class UserSprintsService {
@@ -62,13 +44,10 @@ export class UserSprintsService {
       ),
     )
 
-    const usersMap = new Map<string, BitrixUser>()
+    const usersMap = new Map<string, UserInfo>()
 
     for (const user of users) {
-      const userId = String(user.ID ?? user.id ?? '')
-      if (userId) {
-        usersMap.set(userId, user)
-      }
+      usersMap.set(user.id, user)
     }
 
     const availableTime = this.getAvailableTime(startDate)
@@ -154,19 +133,15 @@ export class UserSprintsService {
     return 0
   }
 
-  private groupTimeByActivity(reports: unknown[]): ActivitiesMap {
+  private groupTimeByActivity(reports: ReportProps[]): ActivitiesMap {
     const activitiesMap = this.createEmptyActivitiesMap()
 
     for (const report of reports) {
-      const reportRecord = report as Record<string, unknown>
-
       const activityType = Number(
-        reportRecord[DtoFieldsDailyReports.activityType] ?? 0,
+        report[DailyReportCodes.activityType] ?? 0,
       ) as ActivityType
 
-      const timeSpent = this.parseSpentTime(
-        reportRecord[DtoFieldsDailyReports.timeSpent],
-      )
+      const timeSpent = this.parseSpentTime(report[DailyReportCodes.timeSpent])
 
       if (!activityType || !(activityType in activitiesMap)) {
         continue
@@ -206,27 +181,13 @@ export class UserSprintsService {
   }
 
   private getUserTitle(
-    user: BitrixUser | undefined,
+    user: UserInfo | undefined,
     fallbackUserId: number,
   ): string {
-    if (!user) {
+    if (!user?.title) {
       return `Пользователь ${fallbackUserId}`
     }
 
-    const titleFromFields = user.TITLE ?? user.title
-    if (titleFromFields) {
-      return titleFromFields
-    }
-
-    const firstName = user.NAME ?? user.name ?? ''
-    const lastName = user.LAST_NAME ?? user.lastName ?? ''
-    const secondName = user.SECOND_NAME ?? user.secondName ?? ''
-
-    const fullName = [lastName, firstName, secondName]
-      .filter(Boolean)
-      .join(' ')
-      .trim()
-
-    return fullName || `Пользователь ${fallbackUserId}`
+    return user.title
   }
 }

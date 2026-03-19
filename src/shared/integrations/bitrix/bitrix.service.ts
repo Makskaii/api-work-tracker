@@ -6,47 +6,29 @@ import {
   Endpoints,
   EntityTypeIds,
 } from 'src/constants/const'
+import {
+  BitrixUserResponse,
+  BitrixUsersApiResponse,
+  UserInfo,
+} from 'src/types/bitrix'
+import { ReportProps } from 'src/types/reports'
 import { AnyObject } from 'src/types/types'
-
-export interface BitrixUser {
-  ID?: string | number
-  id?: string | number
-  NAME?: string
-  LAST_NAME?: string
-  SECOND_NAME?: string
-  TITLE?: string
-  name?: string
-  lastName?: string
-  secondName?: string
-  title?: string
-}
-
-type BitrixUsersResult =
-  | BitrixUser[]
-  | {
-      items?: BitrixUser[]
-      users?: BitrixUser[]
-    }
-  | null
-  | undefined
 
 @Injectable()
 export class BitrixService {
   constructor(private readonly httpService: HttpService) {}
 
-  async listItems<T = Record<string, unknown>>(
+  async listItems<T>(
     entityTypeId: number,
-    params: {
-      select?: readonly string[]
-      filter?: AnyObject
-      order?: AnyObject
-    },
+    select?: readonly string[],
+    filter?: AnyObject,
   ): Promise<T[]> {
     const response = await firstValueFrom(
       this.httpService.get(Endpoints.crmItems, {
         params: {
           entityTypeId,
-          ...params,
+          select,
+          filter,
         },
       }),
     )
@@ -58,26 +40,27 @@ export class BitrixService {
     userId: number,
     start: string,
     end: string,
-  ): Promise<Record<string, unknown>[]> {
-    return this.listItems(EntityTypeIds.reports, {
-      select: DAILY_REPORT_SELECT,
-      filter: {
+  ): Promise<ReportProps[]> {
+    return this.listItems<ReportProps>(
+      EntityTypeIds.reports,
+      DAILY_REPORT_SELECT,
+      {
         assignedById: userId,
         '>=begindate': start,
         '<=begindate': end,
       },
-    })
+    )
   }
 
-  async getUsersByIds(userIds: number[]): Promise<BitrixUser[]> {
+  async getUsersByIds(userIds: number[]): Promise<UserInfo[]> {
     if (!userIds.length) {
       return []
     }
 
     const results = await Promise.allSettled(
-      userIds.map(async (userId): Promise<BitrixUser | null> => {
+      userIds.map(async (userId): Promise<UserInfo | null> => {
         const response = await firstValueFrom(
-          this.httpService.get(Endpoints.users, {
+          this.httpService.get<BitrixUsersApiResponse>(Endpoints.users, {
             params: {
               filter: {
                 ID: userId,
@@ -86,30 +69,36 @@ export class BitrixService {
           }),
         )
 
-        const result = response.data?.result as BitrixUsersResult
+        const user = response.data.result?.[0]
 
-        if (Array.isArray(result)) {
-          return result[0] ?? null
+        if (!user?.ID) {
+          return null
         }
 
-        if (result && Array.isArray(result.items)) {
-          return result.items[0] ?? null
+        return {
+          id: String(user.ID),
+          title: this.buildUserTitle(user),
         }
-
-        if (result && Array.isArray(result.users)) {
-          return result.users[0] ?? null
-        }
-
-        return null
       }),
     )
 
     return results
       .filter(
-        (item): item is PromiseFulfilledResult<BitrixUser | null> =>
+        (item): item is PromiseFulfilledResult<UserInfo | null> =>
           item.status === 'fulfilled',
       )
       .map((item) => item.value)
-      .filter((item): item is BitrixUser => Boolean(item))
+      .filter((item): item is UserInfo => Boolean(item))
+  }
+
+  private buildUserTitle(user: BitrixUserResponse): string {
+    if (user.TITLE?.trim()) {
+      return user.TITLE.trim()
+    }
+
+    return [user.LAST_NAME, user.NAME, user.SECOND_NAME]
+      .filter(Boolean)
+      .join(' ')
+      .trim()
   }
 }

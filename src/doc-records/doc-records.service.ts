@@ -44,7 +44,9 @@ export class DocRecordsService {
   }
 
   private parseSpentTime(value: unknown): number {
-    if (typeof value === 'number') return value
+    if (typeof value === 'number') {
+      return value
+    }
 
     if (typeof value === 'string') {
       const normalized = value.replace(',', '.').trim()
@@ -54,23 +56,6 @@ export class DocRecordsService {
     }
 
     return 0
-  }
-
-  private getSprintStartValue(task: TaskProps): string | null {
-    const sprintStartValue = (task as unknown as Record<string, unknown>)[
-      TaskCodes.sprintDateStart
-    ]
-
-    if (Array.isArray(sprintStartValue)) {
-      const firstValue = sprintStartValue[0]
-      return typeof firstValue === 'string' ? firstValue : null
-    }
-
-    if (typeof sprintStartValue === 'string') {
-      return sprintStartValue
-    }
-
-    return null
   }
 
   private async getReportsMapByTaskIds(
@@ -95,18 +80,19 @@ export class DocRecordsService {
       'createdTime',
       'lastActivityTime',
       `parentId${EntityTypeIds.tasks}`,
-    ]
+    ] as const
 
     const reportsResponses = await Promise.all(
       taskIds.map((taskId) =>
-        this.bitrixService.listItems<ReportProps>(EntityTypeIds.reports, {
-          select: reportSelectFields,
-          filter: {
+        this.bitrixService.listItems<ReportProps>(
+          EntityTypeIds.reports,
+          reportSelectFields,
+          {
             [DailyReportCodes.parentId]: taskId,
             '>=begindate': start,
             '<=begindate': end,
           },
-        }),
+        ),
       ),
     )
 
@@ -130,14 +116,12 @@ export class DocRecordsService {
 
     const tasks = await this.bitrixService.listItems<TaskProps>(
       EntityTypeIds.tasks,
+      taskSelectFields,
       {
-        select: taskSelectFields,
-        filter: {
-          [`>=${TaskCodes.sprintDateStart}`]: startDate,
-          [`<=${TaskCodes.sprintDateStart}`]: end,
-          stageId: 'DT1072_18:UC_6JNSDG',
-          [TaskCodes.project]: projId,
-        },
+        [`>=${TaskCodes.sprintDateStart}`]: startDate,
+        [`<=${TaskCodes.sprintDateStart}`]: end,
+        stageId: 'DT1072_18:UC_6JNSDG',
+        [TaskCodes.project]: projId,
       },
     )
 
@@ -187,24 +171,30 @@ export class DocRecordsService {
       0,
     )
 
-    const firstWeekBoundary = dayjs(startDate).add(7, 'day')
+    const firstWeekEnd = dayjs(startDate).add(7, 'day')
 
     const firstWeekSpent = tasksWithTimeSpent
       .filter((task) => {
-        const sprintStart = this.getSprintStartValue(task)
+        const sprintStart = task[TaskCodes.sprintDateStart]
+        const sprintStartValue = Array.isArray(sprintStart)
+          ? sprintStart[0]
+          : sprintStart
 
-        return sprintStart
-          ? dayjs(sprintStart).isBefore(firstWeekBoundary, 'day')
+        return sprintStartValue
+          ? dayjs(sprintStartValue).isBefore(firstWeekEnd, 'day')
           : false
       })
       .reduce((sum, task) => sum + task.timeSpent, 0)
 
     const secondWeekSpent = tasksWithTimeSpent
       .filter((task) => {
-        const sprintStart = this.getSprintStartValue(task)
+        const sprintStart = task[TaskCodes.sprintDateStart]
+        const sprintStartValue = Array.isArray(sprintStart)
+          ? sprintStart[0]
+          : sprintStart
 
-        return sprintStart
-          ? !dayjs(sprintStart).isBefore(firstWeekBoundary, 'day')
+        return sprintStartValue
+          ? !dayjs(sprintStartValue).isBefore(firstWeekEnd, 'day')
           : false
       })
       .reduce((sum, task) => sum + task.timeSpent, 0)

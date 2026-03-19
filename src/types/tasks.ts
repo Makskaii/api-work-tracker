@@ -25,4 +25,5 @@ export interface TaskProps {
   [TaskCodes.description]: string
   [TaskCodes.stage]: string
   [TaskCodes.timeSpent]: string
+  [TaskCodes.sprintDateStart]: string | string[]
 }

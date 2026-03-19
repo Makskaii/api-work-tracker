@@ -57,7 +57,7 @@ export class BitrixService {
       return []
     }
 
-    const results = await Promise.allSettled(
+    const results = await Promise.all(
       userIds.map(async (userId): Promise<UserInfo | null> => {
         const response = await firstValueFrom(
           this.httpService.get<BitrixUsersApiResponse>(Endpoints.users, {
@@ -82,13 +82,7 @@ export class BitrixService {
       }),
     )
 
-    return results
-      .filter(
-        (item): item is PromiseFulfilledResult<UserInfo | null> =>
-          item.status === 'fulfilled',
-      )
-      .map((item) => item.value)
-      .filter((item): item is UserInfo => Boolean(item))
+    return results.filter((item): item is UserInfo => item !== null)
   }
 
   private buildUserTitle(user: BitrixUserResponse): string {
@@ -96,9 +90,6 @@ export class BitrixService {
       return user.TITLE.trim()
     }
 
-    return [user.LAST_NAME, user.NAME, user.SECOND_NAME]
-      .filter(Boolean)
-      .join(' ')
-      .trim()
+    return [user.LAST_NAME, user.NAME].filter(Boolean).join(' ').trim()
   }
 }

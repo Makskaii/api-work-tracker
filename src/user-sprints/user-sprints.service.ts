@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common'
+import { BadRequestException, Injectable } from '@nestjs/common'
 import dayjs from 'dayjs'
 import { DailyReportCodes } from 'src/constants/const'
 import { UserInfo } from 'src/types/bitrix'
@@ -11,7 +11,7 @@ import {
 import { BitrixService } from '../shared/integrations/bitrix/bitrix.service'
 
 const FULL_SPRINT_AVAILABLE_TIME = 40
-const HOURS_PER_DAY = 6
+const HOURS_PER_DAY = 8
 
 @Injectable()
 export class UserSprintsService {
@@ -26,16 +26,12 @@ export class UserSprintsService {
       return []
     }
 
-    const uniqueUserIds = [...new Set(userIds)]
+    const uniqueUserIds = userIds
 
     const users = await this.bitrixService
       .getUsersByIds(uniqueUserIds)
       .catch((error) => {
-        console.error(
-          'Не удалось получить пользователей из Bitrix:',
-          error?.message,
-        )
-        return []
+        throw new BadRequestException()
       })
 
     const reportsByUsers = await Promise.all(

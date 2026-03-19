@@ -44,9 +44,7 @@ export class DocRecordsService {
   }
 
   private parseSpentTime(value: unknown): number {
-    if (typeof value === 'number') {
-      return value
-    }
+    if (typeof value === 'number') return value
 
     if (typeof value === 'string') {
       const normalized = value.replace(',', '.').trim()
@@ -63,10 +61,6 @@ export class DocRecordsService {
     start: string,
     end: string,
   ) {
-    if (!taskIds.length) {
-      return {}
-    }
-
     const reportSelectFields = [
       'id',
       'title',
@@ -80,7 +74,7 @@ export class DocRecordsService {
       'createdTime',
       'lastActivityTime',
       `parentId${EntityTypeIds.tasks}`,
-    ] as const
+    ]
 
     const reportsResponses = await Promise.all(
       taskIds.map((taskId) =>
@@ -110,13 +104,9 @@ export class DocRecordsService {
 
     const startDate = dayjs(start).subtract(7, 'day').format('YYYY-MM-DD')
 
-    const taskSelectFields = Array.from(
-      new Set([...TASK_SELECT_FIELDS, TaskCodes.sprintDateStart]),
-    )
-
     const tasks = await this.bitrixService.listItems<TaskProps>(
       EntityTypeIds.tasks,
-      taskSelectFields,
+      TASK_SELECT_FIELDS,
       {
         [`>=${TaskCodes.sprintDateStart}`]: startDate,
         [`<=${TaskCodes.sprintDateStart}`]: end,
@@ -171,32 +161,19 @@ export class DocRecordsService {
       0,
     )
 
-    const firstWeekEnd = dayjs(startDate).add(7, 'day')
+    const firstWeekEnd = dayjs(startDate).add(7, 'day').format('YYYY-MM-DD')
 
     const firstWeekSpent = tasksWithTimeSpent
-      .filter((task) => {
-        const sprintStart = task[TaskCodes.sprintDateStart]
-        const sprintStartValue = Array.isArray(sprintStart)
-          ? sprintStart[0]
-          : sprintStart
-
-        return sprintStartValue
-          ? dayjs(sprintStartValue).isBefore(firstWeekEnd, 'day')
-          : false
-      })
+      .filter((task) =>
+        dayjs(task[TaskCodes.sprintDateStart]).isBefore(dayjs(firstWeekEnd)),
+      )
       .reduce((sum, task) => sum + task.timeSpent, 0)
 
     const secondWeekSpent = tasksWithTimeSpent
-      .filter((task) => {
-        const sprintStart = task[TaskCodes.sprintDateStart]
-        const sprintStartValue = Array.isArray(sprintStart)
-          ? sprintStart[0]
-          : sprintStart
-
-        return sprintStartValue
-          ? !dayjs(sprintStartValue).isBefore(firstWeekEnd, 'day')
-          : false
-      })
+      .filter(
+        (task) =>
+          !dayjs(task[TaskCodes.sprintDateStart]).isBefore(dayjs(firstWeekEnd)),
+      )
       .reduce((sum, task) => sum + task.timeSpent, 0)
 
     const logoBase64 = this.getImageBase64('public/docsLogo/logo.jpg')

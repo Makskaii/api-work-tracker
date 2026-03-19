@@ -34,6 +34,36 @@ export const EntityTypeIds = {
   tasks: 1072,
 }
 
+export enum DtoFieldsDailyReports {
+  title = 'ufCrm11_1770627903531',
+  timeSpent = 'ufCrm11_1770627880479',
+  taskId = 'ufCrm11_1770627808462',
+  project = 'ufCrm11_1772012010',
+  activityType = 'ufCrm11_1770804288638',
+  parentId = 'parentId1072',
+}
+
+export enum ActivityType {
+  development = 269,
+  clientCall = 270,
+  analitycsCall = 271,
+  dash = 272,
+  devsCall = 275,
+}
+
+export const DAILY_REPORT_SELECT = [
+  'id',
+  'title',
+  'begindate',
+  'assignedById',
+  DtoFieldsDailyReports.title,
+  DtoFieldsDailyReports.timeSpent,
+  DtoFieldsDailyReports.project,
+  DtoFieldsDailyReports.taskId,
+  DtoFieldsDailyReports.activityType,
+  DtoFieldsDailyReports.parentId,
+];
+
 export const TASK_SELECT_FIELDS = [
   'id',
   'title',

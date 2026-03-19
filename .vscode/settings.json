@@ -19,4 +19,5 @@
     "source.organizeImports.biome": "explicit",
     "source.fixAll.biome": "explicit"
   },
+  "editor.formatOnSave": true
 }

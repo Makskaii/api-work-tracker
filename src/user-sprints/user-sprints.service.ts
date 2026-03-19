@@ -26,16 +26,14 @@ export class UserSprintsService {
       return []
     }
 
-    const uniqueUserIds = userIds
-
     const users = await this.bitrixService
-      .getUsersByIds(uniqueUserIds)
+      .getUsersByIds(userIds)
       .catch((error) => {
         throw new BadRequestException()
       })
 
     const reportsByUsers = await Promise.all(
-      uniqueUserIds.map((userId) =>
+      userIds.map((userId) =>
         this.bitrixService.getReportsByUser(userId, startDate, endDate),
       ),
     )
@@ -48,7 +46,7 @@ export class UserSprintsService {
 
     const availableTime = this.getAvailableTime(startDate)
 
-    return uniqueUserIds.map((userId, index): SprintEmployeeStatsResponse => {
+    return userIds.map((userId, index): SprintEmployeeStatsResponse => {
       const reports = reportsByUsers[index] ?? []
       const activitiesMap = this.groupTimeByActivity(reports)
       const timeSpent = this.calculateTotalTime(activitiesMap)

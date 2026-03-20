@@ -164,18 +164,9 @@ export class DocRecordsService {
     const firstWeekEnd = dayjs(startDate).add(7, 'day').format('YYYY-MM-DD')
 
     const firstWeekSpent = tasksWithTimeSpent
-      .filter((task) => {
-        console.log(
-          dayjs(task[TaskCodes.sprintDateStart]).isBefore(dayjs('2026-03-18')),
-          {
-            dateTask: task[TaskCodes.sprintDateStart],
-            firstWeekEnd,
-          },
-        )
-        return dayjs(task[TaskCodes.sprintDateStart]).isBefore(
-          dayjs(firstWeekEnd),
-        )
-      })
+      .filter((task) =>
+        dayjs(task[TaskCodes.sprintDateStart]).isBefore(dayjs(firstWeekEnd)),
+      )
       .reduce((sum, task) => sum + task.timeSpent, 0)
 
     const secondWeekSpent = tasksWithTimeSpent

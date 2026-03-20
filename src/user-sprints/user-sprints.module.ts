@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common'
-import { RedisModule } from 'src/redis/redis.module'
 import { BitrixModule } from 'src/shared/integrations/bitrix/bitrix.module'
+import { RedisModule } from 'src/shared/redis/redis.module'
 import { UserSprintsController } from './user-sprints.controller'
 import { UserSprintsService } from './user-sprints.service'
 

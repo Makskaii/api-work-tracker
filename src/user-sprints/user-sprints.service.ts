@@ -1,7 +1,9 @@
 import { BadRequestException, Injectable } from '@nestjs/common'
 import dayjs from 'dayjs'
+import timezone from 'dayjs/plugin/timezone'
+import utc from 'dayjs/plugin/utc'
 import { DailyReportCodes } from 'src/constants/const'
-import { RedisService } from 'src/redis/redis.service'
+import { RedisService } from 'src/shared/redis/redis.service'
 import { UserInfo } from 'src/types/bitrix'
 import { ReportProps } from 'src/types/reports'
 import {
@@ -10,6 +12,9 @@ import {
   SprintEmployeeStatsResponse,
 } from 'src/types/user-sprints'
 import { BitrixService } from '../shared/integrations/bitrix/bitrix.service'
+
+dayjs.extend(utc)
+dayjs.extend(timezone)
 
 const FULL_SPRINT_AVAILABLE_TIME = 40
 const HOURS_PER_DAY = 8
@@ -37,11 +42,8 @@ export class UserSprintsService {
       await this.redisService.getJson<SprintEmployeeStatsResponse[]>(cacheKey)
 
     if (cached) {
-      console.log('REDIS CACHE HIT:', cacheKey)
       return cached
     }
-
-    console.log('REDIS CACHE MISS:', cacheKey)
 
     const users = await this.bitrixService
       .getUsersByIds(normalizedUserIds)
@@ -90,8 +92,7 @@ export class UserSprintsService {
       },
     )
 
-    const ttlSeconds = Number(process.env.REDIS_CACHE_TTL_SECONDS || 86400)
-
+    const ttlSeconds = this.getCacheTtlSeconds()
     await this.redisService.setJson(cacheKey, result, ttlSeconds)
 
     return result
@@ -217,5 +218,19 @@ export class UserSprintsService {
     }
 
     return user.title
+  }
+
+  private getCacheTtlSeconds(): number {
+    const timeZone = 'Europe/Moscow'
+
+    const now = dayjs().tz(timeZone)
+
+    let nextReset = now.hour(21).minute(0).second(0).millisecond(0)
+
+    if (now.isAfter(nextReset) || now.isSame(nextReset)) {
+      nextReset = nextReset.add(1, 'day')
+    }
+
+    return Math.max(nextReset.diff(now, 'second'), 1)
   }
 }

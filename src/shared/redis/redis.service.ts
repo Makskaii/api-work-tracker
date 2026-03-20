@@ -6,7 +6,6 @@ import {
   OnModuleInit,
   ServiceUnavailableException,
 } from '@nestjs/common'
-import { Cron } from '@nestjs/schedule'
 import { createClient } from 'redis'
 
 @Injectable()
@@ -110,12 +109,5 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     } catch {
       throw new ServiceUnavailableException('Не удалось очистить Redis')
     }
-  }
-
-  @Cron('0 21 * * *', {
-    timeZone: process.env.REDIS_CACHE_TIMEZONE || 'Europe/Warsaw',
-  })
-  async clearCacheAt21(): Promise<void> {
-    await this.flushDb()
   }
 }

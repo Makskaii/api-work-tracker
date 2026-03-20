@@ -3,7 +3,7 @@ import { ScheduleModule } from '@nestjs/schedule'
 import { AppController } from './app.controller'
 import { AppService } from './app.service'
 import { DocRecordsModule } from './doc-records/doc-records.module'
-import { RedisModule } from './redis/redis.module'
+import { RedisModule } from './shared/redis/redis.module'
 import { UserSprintsModule } from './user-sprints/user-sprints.module'
 
 @Module({

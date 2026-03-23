@@ -18,6 +18,8 @@ dayjs.extend(timezone)
 
 const FULL_SPRINT_AVAILABLE_TIME = 40
 const HOURS_PER_DAY = 8
+const CACHE_TIMEZONE = 'Europe/Moscow'
+const CACHE_RESET_HOUR = 21
 
 @Injectable()
 export class UserSprintsService {
@@ -103,7 +105,9 @@ export class UserSprintsService {
     startDate: string,
     endDate: string,
   ): string {
-    return `user-sprints:stats:u=${userIds.join(',')}:s=${startDate}:e=${endDate}`
+    const cacheVersion = this.getCacheVersion()
+
+    return `user-sprints:stats:v=${cacheVersion}:u=${userIds.join(',')}:s=${startDate}:e=${endDate}`
   }
 
   private getSprintBorders(date: Date): {
@@ -221,16 +225,34 @@ export class UserSprintsService {
   }
 
   private getCacheTtlSeconds(): number {
-    const timeZone = 'Europe/Moscow'
+    const now = this.getCurrentCacheTime()
+    const nextReset = this.getNextCacheReset(now)
 
-    const now = dayjs().tz(timeZone)
+    return Math.max(nextReset.diff(now, 'second'), 1)
+  }
 
-    let nextReset = now.hour(21).minute(0).second(0).millisecond(0)
+  private getCacheVersion(): string {
+    const now = this.getCurrentCacheTime()
+    const nextReset = this.getNextCacheReset(now)
+
+    return nextReset.format('YYYY-MM-DD')
+  }
+
+  private getCurrentCacheTime() {
+    return dayjs().tz(CACHE_TIMEZONE)
+  }
+
+  private getNextCacheReset(now: dayjs.Dayjs) {
+    let nextReset = now
+      .hour(CACHE_RESET_HOUR)
+      .minute(0)
+      .second(0)
+      .millisecond(0)
 
     if (now.isAfter(nextReset) || now.isSame(nextReset)) {
       nextReset = nextReset.add(1, 'day')
     }
 
-    return Math.max(nextReset.diff(now, 'second'), 1)
+    return nextReset
   }
 }

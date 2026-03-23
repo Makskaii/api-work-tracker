@@ -1,20 +1,11 @@
 import { Injectable } from '@nestjs/common'
-import dayjs from 'dayjs'
 import { TaskCodes } from 'src/constants/const'
 import { GroupedTasksWithTimeSpent } from 'src/types/reports'
-import { TaskProps } from 'src/types/tasks'
-
-type SummaryRow = {
-  label: string
-  value: string
-}
 
 type BuildReportParams = {
   groupedTasks: GroupedTasksWithTimeSpent
-  summaryRows: SummaryRow[]
   periodText: string
   departmentTitle?: string
-  logoUrl?: string
   watermarkUrl?: string
 }
 
@@ -22,77 +13,57 @@ type BuildReportParams = {
 export class HtmlBuilderService {
   buildReportHtml({
     groupedTasks,
-    summaryRows,
     periodText,
     departmentTitle = 'отдела разработки',
-    logoUrl,
     watermarkUrl,
   }: BuildReportParams) {
-    const sortedDates = Object.keys(groupedTasks).sort(
-      (a, b) => dayjs(b).valueOf() - dayjs(a).valueOf(),
-    )
+    const allTasks = Object.values(groupedTasks)
+      .flat()
+      .sort((a, b) => {
+        const aTime = new Date(a.movedTime ?? 0).getTime()
+        const bTime = new Date(b.movedTime ?? 0).getTime()
 
-    const summaryTableHtml = summaryRows
-      .map(
-        (row) => `
-          <tr>
-            <td>${this.escapeHtml(row.label)}</td>
-            <td>${this.escapeHtml(row.value)}</td>
-          </tr>
-        `,
-      )
-      .join('')
+        return bTime - aTime
+      })
 
-    const groupedTasksHtml = sortedDates
-      .map((date, dateIndex) => {
-        const tasks = groupedTasks[date] ?? []
+    const tasksHtml = allTasks
+      .map((task, index) => {
+        const description = this.escapeHtml(
+          String(task[TaskCodes.description] ?? ''),
+        ).replace(/\n/g, '<br />')
 
-        const tasksHtml = tasks
-          .map((task, taskIndex) => {
-            const description = this.escapeHtml(
-              String(task[TaskCodes.description] ?? ''),
-            ).replace(/\n/g, '<br />')
-
-            const spent = task.timeSpent
-              ? `${this.escapeHtml(String(task.timeSpent))} ч.`
-              : null
-
-            return `
-              <div class="task-entry">
-                <div class="task-line">
-                  <span class="task-line-number">${taskIndex + 1}.</span>
-                  <span class="task-line-title">${this.escapeHtml(task.title ?? '')}</span>
-                </div>
-
-                ${
-                  spent
-                    ? `
-                      <div class="task-meta" style="font-style:italic">
-                        <span class="task-meta-label">Трудозатраты:</span>
-                        <span>${spent}</span>
-                      </div>
-                    `
-                    : ''
-                }
-
-                ${
-                  description
-                    ? `
-                      <div class="task-description">
-                        ${description}
-                      </div>
-                    `
-                    : ''
-                }
-              </div>
-            `
-          })
-          .join('')
+        const spent =
+          typeof task.timeSpent === 'number' && task.timeSpent > 0
+            ? `${this.escapeHtml(String(task.timeSpent))} ч.`
+            : null
 
         return `
-          <div class="date-section">
-            <div class="date-subtitle">3.${dateIndex + 1}. ${dayjs(date).format('DD.MM.YYYY')}</div>
-            ${tasksHtml || '<div class="empty">Задачи за эту дату отсутствуют</div>'}
+          <div class="task-entry">
+            <div class="task-line">
+              <span class="task-line-number">${index + 1}.</span>
+              <span class="task-line-title">${this.escapeHtml(task.title ?? '')}</span>
+            </div>
+
+            ${
+              spent
+                ? `
+                  <div class="task-meta">
+                    <span class="task-meta-label">Трудозатраты:</span>
+                    <span>${spent}</span>
+                  </div>
+                `
+                : ''
+            }
+
+            ${
+              description
+                ? `
+                  <div class="task-description">
+                    ${description}
+                  </div>
+                `
+                : ''
+            }
           </div>
         `
       })
@@ -132,12 +103,6 @@ export class HtmlBuilderService {
               position: relative;
             }
 
-            .document {
-              position: relative;
-              z-index: 1;
-              width: 100%;
-            }
-
             .watermark {
               position: fixed;
               top: 50%;
@@ -147,17 +112,10 @@ export class HtmlBuilderService {
               transform: translate(-50%, -50%);
               pointer-events: none;
               z-index: 0;
-    
               background-image: url('${watermarkUrl ?? ''}');
               background-repeat: no-repeat;
               background-position: center;
               background-size: contain;
-            }
-
-            .watermark img {
-              width: 65%;
-              max-width: 520px;
-              object-fit: contain;
             }
 
             .document {
@@ -173,18 +131,12 @@ export class HtmlBuilderService {
               margin-bottom: 20px;
             }
 
-            .top-brand-logo {
-              width: 72px;
-              height: 72px;
-              object-fit: contain;
-              flex-shrink: 0;
-            }
-
             .top-brand-title {
               font-size: 22px;
               font-weight: 700;
               line-height: 1.25;
               margin: 0;
+              color: rgb(60, 134, 140);
             }
 
             .section-list {
@@ -216,46 +168,6 @@ export class HtmlBuilderService {
               text-align: justify;
             }
 
-            .summary-table-wrap {
-              margin-top: 10px;
-              max-width: 720px;
-            }
-
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              table-layout: fixed;
-              font-size: 13px;
-            }
-
-            th,
-            td {
-              border: 1px solid #444;
-              padding: 8px 10px;
-              vertical-align: top;
-              text-align: left;
-              word-break: break-word;
-            }
-
-            th {
-              background: #f3f3f3;
-              font-weight: 700;
-            }
-
-            .date-section {
-              margin-top: 14px;
-              break-inside: auto;
-              page-break-inside: auto;
-            }
-
-            .date-subtitle {
-              font-weight: 700;
-              font-size: 14px;
-              margin-bottom: 10px;
-              break-after: avoid;
-              page-break-after: avoid;
-            }
-
             .task-entry {
               margin-bottom: 14px;
               break-inside: avoid;
@@ -279,6 +191,7 @@ export class HtmlBuilderService {
 
             .task-meta {
               margin: 4px 0 0 24px;
+              font-style: italic;
             }
 
             .task-meta-label {
@@ -296,19 +209,15 @@ export class HtmlBuilderService {
               color: #666;
               font-style: italic;
             }
-
-
-          
           </style>
         </head>
 
-       <body>
-        ${watermarkUrl ? `<div class="watermark"></div>` : ''}
-
+        <body>
+          ${watermarkUrl ? `<div class="watermark"></div>` : ''}
 
           <div class="document">
             <div class="top-brand">
-              <h1 class="top-brand-title" style="color:rgb(60, 134, 140)">
+              <h1 class="top-brand-title">
                 Отчет по задачам ${this.escapeHtml(departmentTitle)}:
               </h1>
             </div>
@@ -319,14 +228,16 @@ export class HtmlBuilderService {
 
                 <ol class="sub-list">
                   <li>
-                   <strong style="color: rgb(60, 134, 140)"> Период и назначение документа</strong>
+                    <strong style="color: rgb(60, 134, 140)">
+                      Период и назначение документа
+                    </strong>
                     <p class="paragraph">
                       Документ отражает перечень задач ${this.escapeHtml(
                         departmentTitle.toLowerCase(),
                       )} за период
                       ${this.escapeHtml(periodText)},
                       сформированный на основании предоставленных заказчиком запросов.
-                      \n
+                      <br /><br />
                       Статусы фактического закрытия задач, сроки завершения и комментарии
                       при необходимости уточняются отдельно.
                     </p>
@@ -335,30 +246,8 @@ export class HtmlBuilderService {
               </li>
 
               <li>
-                <div class="section-title">Сводка по задачам</div>
-
-                <ol class="sub-list">
-                  <li><strong>Общая информация</strong></li>
-                </ol>
-
-                <div class="summary-table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th style="background:rgb(60, 134, 140)">Показатель</th>
-                        <th style="background:rgb(60, 134, 140)">Значение</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      ${summaryTableHtml}
-                    </tbody>
-                  </table>
-                </div>
-              </li>
-
-              <li>
-                <div class="section-title">Перечень задач по датам</div>
-                ${groupedTasksHtml || '<div class="empty">Нет данных за выбранный период</div>'}
+                <div class="section-title">Перечень задач</div>
+                ${tasksHtml || '<div class="empty">Нет данных за выбранный период</div>'}
               </li>
             </ol>
           </div>

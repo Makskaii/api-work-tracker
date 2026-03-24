@@ -32,10 +32,10 @@ export class HtmlBuilderService {
           String(task[TaskCodes.description] ?? ''),
         ).replace(/\n/g, '<br />')
 
-        const spent =
-          typeof task.timeSpent === 'number' && task.timeSpent > 0
-            ? `${this.escapeHtml(String(task.timeSpent))} ч.`
-            : null
+        // const spent =
+        //   typeof task.timeSpent === 'number' && task.timeSpent > 0
+        //     ? `${this.escapeHtml(String(task.timeSpent))} ч.`
+        //     : null
 
         return `
           <div class="task-entry">
@@ -43,17 +43,6 @@ export class HtmlBuilderService {
               <span class="task-line-number">${index + 1}.</span>
               <span class="task-line-title">${this.escapeHtml(task.title ?? '')}</span>
             </div>
-
-            ${
-              spent
-                ? `
-                  <div class="task-meta">
-                    <span class="task-meta-label">Трудозатраты:</span>
-                    <span>${spent}</span>
-                  </div>
-                `
-                : ''
-            }
 
             ${
               description

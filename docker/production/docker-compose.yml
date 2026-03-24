@@ -1,6 +1,7 @@
 services:
   backend:
     container_name: work-tracker-api
+    image: work-tracker-api:latest
     build:
       context: ../..
       dockerfile: docker/production/Dockerfile
@@ -9,3 +10,5 @@ services:
     env_file:
       - ../../.env
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

@@ -3,8 +3,10 @@ import { ConfigModule, ConfigService } from '@nestjs/config'
 import { TypeOrmModule } from '@nestjs/typeorm'
 import { AppController } from './app.controller'
 import { AppService } from './app.service'
+import { AuthModule } from './auth/auth.module'
 import { ClientsModule } from './clients/clients.module'
 import { Client } from './clients/entities/client.entity'
+
 import { DocRecordsModule } from './doc-records/doc-records.module'
 import { RedisModule } from './shared/redis/redis.module'
 import { UserSprintsModule } from './user-sprints/user-sprints.module'
@@ -33,6 +35,7 @@ import { UserSprintsModule } from './user-sprints/user-sprints.module'
     RedisModule,
     UserSprintsModule,
     ClientsModule,
+    AuthModule,
   ],
   controllers: [AppController],
   providers: [AppService],

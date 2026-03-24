@@ -228,6 +228,10 @@ export class DocRecordsService {
     //   (sum, task) => sum + task.timeSpent,
     //   0,
     // )
+    // const totalSpent = tasksWithTimeSpent.reduce(
+    //   (sum, task) => sum + task.timeSpent,
+    //   0,
+    // )
 
     // const firstWeekStart = periodStart
     // const firstWeekEnd = dayjs(periodStart).add(6, 'day').format('YYYY-MM-DD')

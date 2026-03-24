@@ -6,34 +6,11 @@ import { AppService } from './app.service'
 import { ClientsModule } from './clients/clients.module'
 import { Client } from './clients/entities/client.entity'
 import { DocRecordsModule } from './doc-records/doc-records.module'
-
-<<<<<<< HEAD
-
-import { RedisModule } from './shared/redis/redis.module'
-
-=======
->>>>>>> main
-
 import { RedisModule } from './shared/redis/redis.module'
 import { UserSprintsModule } from './user-sprints/user-sprints.module'
 
 @Module({
   imports: [
-<<<<<<< HEAD
-    // TypeOrmModule.forRoot({
-    //   type: 'mysql',
-    //   host: 'localhost',
-    //   port: 3306,
-    //   username: 'app_user',
-    //   password: 'app_pass',
-    //   database: 'analytics_db',
-    //   autoLoadEntities: true,
-    //   synchronize: false,
-    //   logging: true,
-    // }),
-    // EmployeeModule,
-    
-=======
     ConfigModule.forRoot({
       isGlobal: true,
     }),
@@ -52,7 +29,6 @@ import { UserSprintsModule } from './user-sprints/user-sprints.module'
         logging: true,
       }),
     }),
->>>>>>> main
     DocRecordsModule,
     RedisModule,
     UserSprintsModule,

@@ -1,6 +1,9 @@
 import { BadRequestException, Injectable } from '@nestjs/common'
 import dayjs from 'dayjs'
+import timezone from 'dayjs/plugin/timezone'
+import utc from 'dayjs/plugin/utc'
 import { DailyReportCodes } from 'src/constants/const'
+import { RedisService } from 'src/shared/redis/redis.service'
 import { UserInfo } from 'src/types/bitrix'
 import { ReportProps } from 'src/types/reports'
 import {
@@ -10,12 +13,20 @@ import {
 } from 'src/types/user-sprints'
 import { BitrixService } from '../shared/integrations/bitrix/bitrix.service'
 
+dayjs.extend(utc)
+dayjs.extend(timezone)
+
 const FULL_SPRINT_AVAILABLE_TIME = 40
 const HOURS_PER_DAY = 8
+const CACHE_TIMEZONE = 'Europe/Moscow'
+const CACHE_RESET_HOUR = 21
 
 @Injectable()
 export class UserSprintsService {
-  constructor(private readonly bitrixService: BitrixService) {}
+  constructor(
+    private readonly bitrixService: BitrixService,
+    private readonly redisService: RedisService,
+  ) {}
 
   async getSprintStatistics(
     userIds: number[],
@@ -26,14 +37,24 @@ export class UserSprintsService {
       return []
     }
 
+    const normalizedUserIds = [...new Set(userIds)].sort((a, b) => a - b)
+    const cacheKey = this.buildCacheKey(normalizedUserIds, startDate, endDate)
+
+    const cached =
+      await this.redisService.getJson<SprintEmployeeStatsResponse[]>(cacheKey)
+
+    if (cached) {
+      return cached
+    }
+
     const users = await this.bitrixService
-      .getUsersByIds(userIds)
-      .catch((error) => {
+      .getUsersByIds(normalizedUserIds)
+      .catch(() => {
         throw new BadRequestException()
       })
 
     const reportsByUsers = await Promise.all(
-      userIds.map((userId) =>
+      normalizedUserIds.map((userId) =>
         this.bitrixService.getReportsByUser(userId, startDate, endDate),
       ),
     )
@@ -46,29 +67,47 @@ export class UserSprintsService {
 
     const availableTime = this.getAvailableTime(startDate)
 
-    return userIds.map((userId, index): SprintEmployeeStatsResponse => {
-      const reports = reportsByUsers[index] ?? []
-      const activitiesMap = this.groupTimeByActivity(reports)
-      const timeSpent = this.calculateTotalTime(activitiesMap)
-      const effectivityValue = this.calculateEffectivity(
-        availableTime,
-        timeSpent,
-      )
+    const result = normalizedUserIds.map(
+      (userId, index): SprintEmployeeStatsResponse => {
+        const reports = reportsByUsers[index] ?? []
+        const activitiesMap = this.groupTimeByActivity(reports)
+        const timeSpent = this.calculateTotalTime(activitiesMap)
+        const effectivityValue = this.calculateEffectivity(
+          availableTime,
+          timeSpent,
+        )
 
-      return {
-        id: String(userId),
-        title: this.getUserTitle(usersMap.get(String(userId)), userId),
-        availableTime,
-        [ActivityType.development]: activitiesMap[ActivityType.development],
-        [ActivityType.clientCall]: activitiesMap[ActivityType.clientCall],
-        [ActivityType.analitycsCall]: activitiesMap[ActivityType.analitycsCall],
-        [ActivityType.dash]: activitiesMap[ActivityType.dash],
-        [ActivityType.devsCall]: activitiesMap[ActivityType.devsCall],
-        timeSpent,
-        effectivity: `${effectivityValue}%`,
-        comment: this.getCommentByEffectivity(effectivityValue),
-      }
-    })
+        return {
+          id: String(userId),
+          title: this.getUserTitle(usersMap.get(String(userId)), userId),
+          availableTime,
+          [ActivityType.development]: activitiesMap[ActivityType.development],
+          [ActivityType.clientCall]: activitiesMap[ActivityType.clientCall],
+          [ActivityType.analitycsCall]:
+            activitiesMap[ActivityType.analitycsCall],
+          [ActivityType.dash]: activitiesMap[ActivityType.dash],
+          [ActivityType.devsCall]: activitiesMap[ActivityType.devsCall],
+          timeSpent,
+          effectivity: `${effectivityValue}%`,
+          comment: this.getCommentByEffectivity(effectivityValue),
+        }
+      },
+    )
+
+    const ttlSeconds = this.getCacheTtlSeconds()
+    await this.redisService.setJson(cacheKey, result, ttlSeconds)
+
+    return result
+  }
+
+  private buildCacheKey(
+    userIds: number[],
+    startDate: string,
+    endDate: string,
+  ): string {
+    const cacheVersion = this.getCacheVersion()
+
+    return `user-sprints:stats:v=${cacheVersion}:u=${userIds.join(',')}:s=${startDate}:e=${endDate}`
   }
 
   private getSprintBorders(date: Date): {
@@ -183,5 +222,37 @@ export class UserSprintsService {
     }
 
     return user.title
+  }
+
+  private getCacheTtlSeconds(): number {
+    const now = this.getCurrentCacheTime()
+    const nextReset = this.getNextCacheReset(now)
+
+    return Math.max(nextReset.diff(now, 'second'), 1)
+  }
+
+  private getCacheVersion(): string {
+    const now = this.getCurrentCacheTime()
+    const nextReset = this.getNextCacheReset(now)
+
+    return nextReset.format('YYYY-MM-DD')
+  }
+
+  private getCurrentCacheTime() {
+    return dayjs().tz(CACHE_TIMEZONE)
+  }
+
+  private getNextCacheReset(now: dayjs.Dayjs) {
+    let nextReset = now
+      .hour(CACHE_RESET_HOUR)
+      .minute(0)
+      .second(0)
+      .millisecond(0)
+
+    if (now.isAfter(nextReset) || now.isSame(nextReset)) {
+      nextReset = nextReset.add(1, 'day')
+    }
+
+    return nextReset
   }
 }

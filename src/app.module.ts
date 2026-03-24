@@ -6,6 +6,7 @@ import { AppService } from './app.service'
 import { ClientsModule } from './clients/clients.module'
 import { Client } from './clients/entities/client.entity'
 import { DocRecordsModule } from './doc-records/doc-records.module'
+import { RedisModule } from './shared/redis/redis.module'
 import { UserSprintsModule } from './user-sprints/user-sprints.module'
 
 @Module({
@@ -29,6 +30,7 @@ import { UserSprintsModule } from './user-sprints/user-sprints.module'
       }),
     }),
     DocRecordsModule,
+    RedisModule,
     UserSprintsModule,
     ClientsModule,
   ],

@@ -1,18 +1,39 @@
 import 'dotenv/config'
-import { ValidationPipe } from '@nestjs/common'
+import { Logger, ValidationPipe } from '@nestjs/common'
 import { NestFactory } from '@nestjs/core'
 import { AppModule } from './app.module'
+import { AllExceptionsFilter } from './shared/filters/all-exceptions.filter'
+import { HttpLoggingInterceptor } from './shared/interceptors/http-logging.interceptor'
 
 const { FRONTEND_URL } = process.env
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { cors: true })
+  const app = await NestFactory.create(AppModule, {
+    cors: true,
+    logger: ['log', 'error', 'warn', 'debug', 'verbose'],
+  })
 
   app.enableCors({
     origin: FRONTEND_URL as string,
   })
 
-  await app.listen(process.env.PORT ?? 3001)
-  console.log(`Server running on port ${process.env.PORT ?? 3001}`)
+  const port = Number(process.env.PORT) || 3001
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      transform: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
+
+  app.useGlobalInterceptors(new HttpLoggingInterceptor())
+  app.useGlobalFilters(new AllExceptionsFilter())
+
+  const logger = new Logger('Bootstrap')
+  logger.log(`Application started on port ${port}`)
+
+  await app.listen(port)
+  console.log(`Server running on port ${port}`)
 }
 bootstrap()

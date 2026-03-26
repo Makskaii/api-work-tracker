@@ -2,7 +2,8 @@ export enum TaskCodes {
   description = 'ufCrm14_1770731622242',
   stage = 'ufCrm14_1770890673468',
   estimateTime = 'ufCrm14_1770731674952',
-  project = 'ufCrm14_1772011269',
+  project = 'ufCrm14_1774264018',
+  client = 'ufCrm14_1772011269',
   reportDate = 'ufCrm14_1771314375250',
   timeSpent = 'ufCrm14_1771314387497',
   comment = 'ufCrm14_1771314401297',
@@ -62,7 +63,7 @@ export const DAILY_REPORT_SELECT = [
   DtoFieldsDailyReports.taskId,
   DtoFieldsDailyReports.activityType,
   DtoFieldsDailyReports.parentId,
-];
+]
 
 export const TASK_SELECT_FIELDS = [
   'id',

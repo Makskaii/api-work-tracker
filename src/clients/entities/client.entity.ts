@@ -9,7 +9,6 @@ import {
 
 @Entity('clients')
 @Unique(['crmClientId'])
-@Unique(['email'])
 export class Client {
   @PrimaryGeneratedColumn({ type: 'bigint', unsigned: true })
   id: number

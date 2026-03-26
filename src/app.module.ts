@@ -9,6 +9,7 @@ import { Client } from './clients/entities/client.entity'
 
 import { DocRecordsModule } from './doc-records/doc-records.module'
 import { RedisModule } from './shared/redis/redis.module'
+import { SprintsModule } from './sprints/sprints.module'
 import { UserSprintsModule } from './user-sprints/user-sprints.module'
 
 @Module({
@@ -36,6 +37,7 @@ import { UserSprintsModule } from './user-sprints/user-sprints.module'
     UserSprintsModule,
     ClientsModule,
     AuthModule,
+    SprintsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

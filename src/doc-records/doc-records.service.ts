@@ -145,15 +145,15 @@ export class DocRecordsService {
 
     const reportsResponses = await Promise.all(
       taskIds.map((taskId) =>
-        this.bitrixService.listItems<ReportProps>(
-          EntityTypeIds.reports,
-          reportSelectFields,
-          {
+        this.bitrixService.listItems<ReportProps>({
+          entityTypeId: EntityTypeIds.reports,
+          select: reportSelectFields,
+          filter: {
             [DailyReportCodes.parentId]: taskId,
             '>=begindate': start,
             '<=begindate': end,
           },
-        ),
+        }),
       ),
     )
 
@@ -172,16 +172,16 @@ export class DocRecordsService {
     const periodStart = dayjs(start).subtract(7, 'day').format('YYYY-MM-DD')
     const periodEnd = end
 
-    const tasks = await this.bitrixService.listItems<TaskProps>(
-      EntityTypeIds.tasks,
-      TASK_SELECT_FIELDS,
-      {
+    const tasks = await this.bitrixService.listItems<TaskProps>({
+      entityTypeId: EntityTypeIds.tasks,
+      select: TASK_SELECT_FIELDS,
+      filter: {
         [`>=${TaskCodes.sprintDateStart}`]: periodStart,
         [`<=${TaskCodes.sprintDateStart}`]: periodEnd,
         stageId: 'DT1072_18:UC_6JNSDG',
         [TaskCodes.project]: projId,
       },
-    )
+    })
 
     const normalizedTasks = Array.isArray(tasks) ? tasks : []
     const taskIds = normalizedTasks.map((task) => String(task.id))

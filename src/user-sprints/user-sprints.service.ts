@@ -3,6 +3,7 @@ import dayjs from 'dayjs'
 import timezone from 'dayjs/plugin/timezone'
 import utc from 'dayjs/plugin/utc'
 import { DailyReportCodes } from 'src/constants/const'
+import { getSprintBorders } from 'src/shared/helpers/getSprintBorders'
 import { RedisService } from 'src/shared/redis/redis.service'
 import { UserInfo } from 'src/types/bitrix'
 import { ReportProps } from 'src/types/reports'
@@ -110,25 +111,8 @@ export class UserSprintsService {
     return `user-sprints:stats:v=${cacheVersion}:u=${userIds.join(',')}:s=${startDate}:e=${endDate}`
   }
 
-  private getSprintBorders(date: Date): {
-    startOfTheWeek: string
-    endOfTheWeek: string
-  } {
-    const dayjsDate = dayjs(date)
-    const currentDay = dayjsDate.day()
-
-    const startOfSprint = currentDay >= 2 ? dayjsDate.day(2) : dayjsDate.day(-5)
-
-    const endOfSprint = startOfSprint.add(6, 'day')
-
-    return {
-      startOfTheWeek: startOfSprint.format('YYYY-MM-DD'),
-      endOfTheWeek: endOfSprint.format('YYYY-MM-DD'),
-    }
-  }
-
   private getAvailableTime(startOfTheWeek: string): number {
-    const currWeekBorders = this.getSprintBorders(new Date())
+    const currWeekBorders = getSprintBorders(new Date())
 
     const currWeekStart = dayjs(currWeekBorders.startOfTheWeek)
       .subtract(1, 'day')

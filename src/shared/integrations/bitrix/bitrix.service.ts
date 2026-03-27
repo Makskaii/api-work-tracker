@@ -18,11 +18,15 @@ import { AnyObject } from 'src/types/types'
 export class BitrixService {
   constructor(private readonly httpService: HttpService) {}
 
-  async listItems<T>(
-    entityTypeId: number,
-    select?: readonly string[],
-    filter?: AnyObject,
-  ): Promise<T[]> {
+  async listItems<T>({
+    entityTypeId,
+    filter,
+    select,
+  }: {
+    entityTypeId: number
+    select?: readonly string[]
+    filter?: AnyObject
+  }): Promise<T[]> {
     const response = await firstValueFrom(
       this.httpService.get(Endpoints.crmItems, {
         params: {
@@ -41,15 +45,15 @@ export class BitrixService {
     start: string,
     end: string,
   ): Promise<ReportProps[]> {
-    return this.listItems<ReportProps>(
-      EntityTypeIds.reports,
-      DAILY_REPORT_SELECT,
-      {
+    return this.listItems<ReportProps>({
+      entityTypeId: EntityTypeIds.reports,
+      select: DAILY_REPORT_SELECT,
+      filter: {
         assignedById: userId,
         '>=begindate': start,
         '<=begindate': end,
       },
-    )
+    })
   }
 
   async getUsersByIds(userIds: number[]): Promise<UserInfo[]> {

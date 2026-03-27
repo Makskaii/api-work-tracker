@@ -18,7 +18,6 @@ export class SprintTaskSnapshot {
 
   @Column({ type: 'varchar', length: 50 })
   sprintCode: string
-  // пример: 2026-03-17_2026-03-30
 
   @Column({ type: 'date' })
   sprintStartDate: string
@@ -37,7 +36,6 @@ export class SprintTaskSnapshot {
 
   @Column({ type: 'bigint', nullable: true })
   employeeId: number | null
-  // обычно assignedId / responsibleId
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   employeeName: string | null
@@ -80,7 +78,6 @@ export class SprintTaskSnapshot {
 
   @Column({ type: 'json', nullable: true })
   sprintDateStart: string[] | null
-  // массив дат старта спринтов, если задача тянется через несколько спринтов
 
   @Column({ type: 'timestamp', nullable: true })
   taskCreatedAt: Date | null
@@ -97,10 +94,12 @@ export class SprintTaskSnapshot {
   @Column({ type: 'timestamp', nullable: true })
   lastSyncedAt: Date | null
 
+  @Column({ type: 'boolean', default: true })
+  isActive: boolean
+
   @Column({ type: 'json', nullable: true })
   // biome-ignore lint/suspicious/noExplicitAny: <just for a while>
   raw: Record<string, any> | null
-  // сырой кусок битрикс-данных для дебага на старте
 
   @CreateDateColumn()
   createdAt: Date

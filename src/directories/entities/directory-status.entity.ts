@@ -15,14 +15,12 @@ export class DirectoryStatus {
 
   @Column({ name: 'bitrix_id', type: 'bigint', nullable: true })
   bitrixId: number | null
-  // ID из справочника статусов Bitrix
 
   @Column({ name: 'entity_id', type: 'varchar', length: 100, nullable: true })
   entityId: string | null
 
   @Column({ name: 'status_id', type: 'varchar', length: 100 })
   statusId: string
-  // например DT1072_18:UC_6JNSDG
 
   @Column({ type: 'varchar', length: 255 })
   name: string

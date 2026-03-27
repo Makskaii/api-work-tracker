@@ -16,11 +16,9 @@ export class DirectoryProject {
 
   @Column({ name: 'list_item_id', type: 'bigint' })
   listItemId: number
-  // ID из универсального списка
 
   @Column({ name: 'sourceProjectId', type: 'bigint', nullable: true })
   sourceProjectId: number | null
-  // реальный ID проекта из PROPERTY_87
 
   @Column({ type: 'varchar', length: 255 })
   name: string

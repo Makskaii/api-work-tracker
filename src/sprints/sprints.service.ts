@@ -5,7 +5,7 @@ import { EntityTypeIds, TaskCodes } from 'src/constants/const'
 import { getSprintBorders } from 'src/shared/helpers/getSprintBorders'
 import { BitrixService } from 'src/shared/integrations/bitrix/bitrix.service'
 import { TaskProps } from 'src/types/tasks'
-import { Repository } from 'typeorm'
+import { Not, Repository } from 'typeorm'
 import { SprintTaskSnapshot } from './entities/sprint-task-snapshot.entity'
 
 @Injectable()
@@ -32,6 +32,23 @@ export class SprintsService {
     return (
       dayjs(today).isAfter(sprintEnd) && task.stageId !== this.DONE_STAGE_ID
     )
+  }
+
+  private getCurrentSprintMeta(date: Date | Dayjs = new Date()) {
+    const today = dayjs(date)
+    const borders = getSprintBorders(today)
+
+    const sprintStartDate = dayjs(borders.startOfTheWeek).format('YYYY-MM-DD')
+    const sprintEndDate = dayjs(borders.endOfTheWeek).format('YYYY-MM-DD')
+    const sprintCode = `${sprintStartDate}_${sprintEndDate}`
+
+    return {
+      today,
+      borders,
+      sprintStartDate,
+      sprintEndDate,
+      sprintCode,
+    }
   }
 
   private mapTaskToSnapshot(
@@ -81,99 +98,132 @@ export class SprintsService {
       movedAt: task.movedTime ? new Date(task.movedTime) : null,
       closedAt: null,
 
+      isActive: true,
       lastSyncedAt: new Date(),
       raw: task,
     }
   }
 
-  async syncTasks() {
-    const today = dayjs()
-    const borders = getSprintBorders(today)
+  private async deactivateMissingTasks(
+    sprintCode: string,
+    actualTaskIds: number[],
+  ) {
+    if (!actualTaskIds.length) {
+      await this.sprintTaskSnapshotRepository
+        .createQueryBuilder()
+        .update(SprintTaskSnapshot)
+        .set({
+          isActive: false,
+          lastSyncedAt: new Date(),
+        })
+        .where('sprintCode = :sprintCode', { sprintCode })
+        .andWhere('isActive = true')
+        .execute()
 
-    const sprintStartDate = dayjs(borders.startOfTheWeek).format('YYYY-MM-DD')
-    const sprintEndDate = dayjs(borders.endOfTheWeek).format('YYYY-MM-DD')
-    const sprintCode = `${sprintStartDate}_${sprintEndDate}`
+      return
+    }
 
-    try {
-      const tasks = await this.bitrixService.listItems<TaskProps>({
-        entityTypeId: EntityTypeIds.tasks,
-        select: [
-          'id',
-          'title',
-          'stageId',
-          'assignedById',
-          'createdTime',
-          'updatedTime',
-          'movedTime',
-          TaskCodes.description,
-          TaskCodes.project,
-          TaskCodes.client,
-          TaskCodes.estimateTime,
-          TaskCodes.sprintDateStart,
-        ],
-        filter: {
-          [`>=${TaskCodes.sprintDateStart}`]: borders.startOfTheWeek,
-          [`<=${TaskCodes.sprintDateStart}`]: borders.endOfTheWeek,
-        },
+    await this.sprintTaskSnapshotRepository
+      .createQueryBuilder()
+      .update(SprintTaskSnapshot)
+      .set({
+        isActive: false,
+        lastSyncedAt: new Date(),
       })
+      .where('sprintCode = :sprintCode', { sprintCode })
+      .andWhere('taskId NOT IN (:...actualTaskIds)', { actualTaskIds })
+      .andWhere('isActive = true')
+      .execute()
+  }
 
-      const snapshots = tasks.map((task) =>
-        this.mapTaskToSnapshot(
-          task,
-          sprintCode,
-          sprintStartDate,
-          sprintEndDate,
-          today,
-        ),
-      )
+  async syncTasks() {
+    const { today, borders, sprintStartDate, sprintEndDate, sprintCode } =
+      this.getCurrentSprintMeta()
 
-      if (!snapshots.length) {
-        this.logger.log(`No tasks found for sprint ${sprintCode}`)
+    const tasks = await this.bitrixService.listItems<TaskProps>({
+      entityTypeId: EntityTypeIds.tasks,
+      select: [
+        'id',
+        'title',
+        'stageId',
+        'assignedById',
+        'createdTime',
+        'updatedTime',
+        'movedTime',
+        TaskCodes.description,
+        TaskCodes.project,
+        TaskCodes.client,
+        TaskCodes.estimateTime,
+        TaskCodes.sprintDateStart,
+      ],
+      filter: {
+        [`>=${TaskCodes.sprintDateStart}`]: borders.startOfTheWeek,
+        [`<=${TaskCodes.sprintDateStart}`]: borders.endOfTheWeek,
+      },
+    })
 
-        return {
-          sprintCode,
-          totalFetched: tasks.length,
-          includedInSprint: 0,
-          upserted: 0,
-        }
-      }
+    const snapshots = tasks.map((task) =>
+      this.mapTaskToSnapshot(
+        task,
+        sprintCode,
+        sprintStartDate,
+        sprintEndDate,
+        today,
+      ),
+    )
 
-      this.logger.log(`Fetched tasks: ${tasks.length}`)
-      this.logger.log(`Filtered tasks: ${tasks.length}`)
-      this.logger.log(
-        `Snapshots: ${JSON.stringify(snapshots.slice(0, 2), null, 2)}`,
-      )
+    const actualTaskIds = snapshots
+      .map((item) => Number(item.taskId))
+      .filter((id) => !Number.isNaN(id))
 
+    if (snapshots.length) {
       await this.sprintTaskSnapshotRepository.upsert(snapshots, {
         conflictPaths: ['sprintCode', 'taskId'],
         skipUpdateIfNoValuesChanged: true,
       })
+    }
 
-      this.logger.log(
-        `Sprint sync completed: sprint=${sprintCode}, fetched=${tasks.length}, included=${tasks.length}`,
-      )
+    await this.deactivateMissingTasks(sprintCode, actualTaskIds)
 
-      return {
-        sprintCode,
-        totalFetched: tasks.length,
-        includedInSprint: tasks.length,
-        upserted: snapshots.length,
-      }
-    } catch (error) {
-      console.log(error)
+    this.logger.log(
+      `Sprint sync completed: sprint=${sprintCode}, fetched=${tasks.length}, active=${actualTaskIds.length}`,
+    )
+
+    return {
+      sprintCode,
+      totalFetched: tasks.length,
+      includedInSprint: tasks.length,
+      upserted: snapshots.length,
+      deactivatedChecked: true,
     }
   }
 
   async getCurrentSprintTasks() {
-    const today = dayjs()
-    const borders = getSprintBorders(today)
-
-    const sprintStartDate = dayjs(borders.startOfTheWeek).format('YYYY-MM-DD')
-    const sprintEndDate = dayjs(borders.endOfTheWeek).format('YYYY-MM-DD')
-    const sprintCode = `${sprintStartDate}_${sprintEndDate}`
+    const { sprintCode } = this.getCurrentSprintMeta()
 
     const tasks = await this.sprintTaskSnapshotRepository.find({
       where: { sprintCode },
+      order: {
+        isActive: 'DESC',
+        updatedAt: 'DESC',
+      },
+    })
+
+    return {
+      sprintCode,
+      count: tasks.length,
+      items: tasks,
+    }
+  }
+
+  async getCurrentActiveSprintTasks() {
+    const { sprintCode } = this.getCurrentSprintMeta()
+
+    const tasks = await this.sprintTaskSnapshotRepository.find({
+      where: {
+        sprintCode,
+        isActive: true,
+      },
       order: {
         updatedAt: 'DESC',
       },
@@ -183,6 +233,175 @@ export class SprintsService {
       sprintCode,
       count: tasks.length,
       items: tasks,
+    }
+  }
+
+  async getCurrentSprintDeveloperStats() {
+    const { sprintCode } = this.getCurrentSprintMeta()
+
+    const tasks = await this.sprintTaskSnapshotRepository.find({
+      where: { sprintCode },
+      order: {
+        isActive: 'DESC',
+        updatedAt: 'DESC',
+      },
+    })
+
+    const grouped = new Map<
+      string,
+      {
+        employeeId: number | null
+        employeeName: string | null
+
+        summaryActive: {
+          tasksTotal: number
+          completedTasks: number
+          notCompletedTasks: number
+          overdueTasks: number
+          estimatedHoursSum: number
+        }
+
+        summaryInactive: {
+          tasksTotal: number
+          completedTasks: number
+          notCompletedTasks: number
+          overdueTasks: number
+          estimatedHoursSum: number
+        }
+
+        tasksByProjectActiveMap: Map<
+          string,
+          {
+            projectId: number | null
+            projectName: string | null
+            count: number
+            completedTasks: number
+            taskIds: number[]
+          }
+        >
+
+        activeItems: SprintTaskSnapshot[]
+        inactiveItems: SprintTaskSnapshot[]
+      }
+    >()
+
+    for (const task of tasks) {
+      const key = String(task.employeeId ?? 'unknown')
+
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          employeeId: task.employeeId ?? null,
+          employeeName: task.employeeName ?? null,
+
+          summaryActive: {
+            tasksTotal: 0,
+            completedTasks: 0,
+            notCompletedTasks: 0,
+            overdueTasks: 0,
+            estimatedHoursSum: 0,
+          },
+
+          summaryInactive: {
+            tasksTotal: 0,
+            completedTasks: 0,
+            notCompletedTasks: 0,
+            overdueTasks: 0,
+            estimatedHoursSum: 0,
+          },
+
+          tasksByProjectActiveMap: new Map(),
+          activeItems: [],
+          inactiveItems: [],
+        })
+      }
+
+      const stat = grouped.get(key)!
+
+      if (task.isActive) {
+        stat.summaryActive.tasksTotal += 1
+        stat.summaryActive.estimatedHoursSum += Number(task.estimatedHours ?? 0)
+
+        if (task.isCompleted) {
+          stat.summaryActive.completedTasks += 1
+        } else {
+          stat.summaryActive.notCompletedTasks += 1
+        }
+
+        if (task.isOverdue) {
+          stat.summaryActive.overdueTasks += 1
+        }
+
+        const projectKey = String(task.projectId ?? 'unknown')
+        const existingProject = stat.tasksByProjectActiveMap.get(projectKey)
+
+        if (existingProject) {
+          existingProject.count += 1
+          existingProject.taskIds.push(Number(task.taskId))
+
+          if (task.isCompleted) {
+            existingProject.completedTasks += 1
+          }
+        } else {
+          stat.tasksByProjectActiveMap.set(projectKey, {
+            projectId: task.projectId ?? null,
+            projectName: task.projectName ?? null,
+            count: 1,
+            completedTasks: task.isCompleted ? 1 : 0,
+            taskIds: [Number(task.taskId)],
+          })
+        }
+
+        stat.activeItems.push(task)
+      } else {
+        stat.summaryInactive.tasksTotal += 1
+        stat.summaryInactive.estimatedHoursSum += Number(
+          task.estimatedHours ?? 0,
+        )
+
+        if (task.isCompleted) {
+          stat.summaryInactive.completedTasks += 1
+        } else {
+          stat.summaryInactive.notCompletedTasks += 1
+        }
+
+        if (task.isOverdue) {
+          stat.summaryInactive.overdueTasks += 1
+        }
+
+        stat.inactiveItems.push(task)
+      }
+    }
+
+    const items = Array.from(grouped.values()).map((stat) => ({
+      employeeId: stat.employeeId,
+      employeeName: stat.employeeName,
+
+      summaryActive: {
+        ...stat.summaryActive,
+        estimatedHoursSum: Number(
+          stat.summaryActive.estimatedHoursSum.toFixed(2),
+        ),
+      },
+
+      summaryInactive: {
+        ...stat.summaryInactive,
+        estimatedHoursSum: Number(
+          stat.summaryInactive.estimatedHoursSum.toFixed(2),
+        ),
+      },
+
+      tasksByProjectActive: Array.from(
+        stat.tasksByProjectActiveMap.values(),
+      ).sort((a, b) => b.count - a.count),
+
+      activeItems: stat.activeItems,
+      inactiveItems: stat.inactiveItems,
+    }))
+
+    return {
+      sprintCode,
+      count: items.length,
+      items,
     }
   }
 }

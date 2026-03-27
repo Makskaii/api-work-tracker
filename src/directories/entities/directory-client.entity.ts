@@ -15,7 +15,6 @@ export class DirectoryClient {
 
   @Column({ name: 'list_item_id', type: 'bigint' })
   listItemId: number
-  // ID элемента списка клиентов
 
   @Column({ type: 'varchar', length: 255 })
   name: string

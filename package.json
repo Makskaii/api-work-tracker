@@ -18,23 +18,18 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-
     "docker:dev": "docker compose -f docker/dev/docker-compose.yml up -d --build",
     "docker:dev:down": "docker compose -f docker/dev/docker-compose.yml down",
     "docker:prod": "docker compose -f docker/production/docker-compose.yml up -d --build",
     "docker:prod:down": "docker compose -f docker/production/docker-compose.yml down",
-
     "build:base": "docker build -f docker/production/Dockerfile.base -t work-tracker-node-chromium:1 .",
     "deploy": "bash docker/production/deploy-safe.sh",
-
     "typeorm": "typeorm-ts-node-commonjs -d src/database/data-source.ts",
-
     "migration:generate": "npm run typeorm -- migration:generate",
     "migration:create": "npm run typeorm -- migration:create",
     "migration:run": "npm run typeorm -- migration:run",
     "migration:revert": "npm run typeorm -- migration:revert",
     "migration:show": "npm run typeorm -- migration:show",
-
     "prepare": "husky"
   },
   "dependencies": {
@@ -45,6 +40,7 @@
     "@nestjs/jwt": "^11.0.2",
     "@nestjs/mapped-types": "*",
     "@nestjs/platform-express": "^11.0.1",
+    "@nestjs/schedule": "^6.1.1",
     "@nestjs/typeorm": "^11.0.0",
     "bcryptjs": "^3.0.3",
     "class-transformer": "^0.5.1",
@@ -86,13 +82,19 @@
     "typescript-eslint": "^8.20.0"
   },
   "jest": {
-    "moduleFileExtensions": ["js", "json", "ts"],
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
-    "collectCoverageFrom": ["**/*.(t|j)s"],
+    "collectCoverageFrom": [
+      "**/*.(t|j)s"
+    ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
   }

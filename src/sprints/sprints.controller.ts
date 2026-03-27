@@ -14,4 +14,9 @@ export class SprintsController {
   async getCurrentSprintTasks() {
     return await this.sprintsService.getCurrentSprintTasks()
   }
+
+  @Get('current/developers/stats')
+  async getCurrentSprintDeveloperStats() {
+    return await this.sprintsService.getCurrentSprintDeveloperStats()
+  }
 }

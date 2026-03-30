@@ -4,6 +4,7 @@ import dayjs, { Dayjs } from 'dayjs'
 import { EntityTypeIds, TaskCodes } from 'src/constants/const'
 import { getSprintBorders } from 'src/shared/helpers/getSprintBorders'
 import { BitrixService } from 'src/shared/integrations/bitrix/bitrix.service'
+import { BitrixClientProjects, BitrixClients, UserInfo } from 'src/types/bitrix'
 import { TaskProps } from 'src/types/tasks'
 import { Not, Repository } from 'typeorm'
 import { SprintTaskSnapshot } from './entities/sprint-task-snapshot.entity'
@@ -51,13 +52,31 @@ export class SprintsService {
     }
   }
 
+  private getClientsName(clients: BitrixClients[], clientId: number) {
+    if (clientId) {
+      return (
+        clients.find((client) => Number(client.ID) === clientId)?.NAME ?? null
+      )
+    }
+  }
+
   private mapTaskToSnapshot(
     task: TaskProps,
     sprintCode: string,
     sprintStartDate: string,
     sprintEndDate: string,
     today: Dayjs,
+    clients: BitrixClients[],
+    users: UserInfo[],
+    projects: BitrixClientProjects[],
   ): Partial<SprintTaskSnapshot> {
+    const clientName = this.getClientsName(clients, task[TaskCodes.client])
+    const employeeName =
+      users.find((user) => Number(user.id) === task.assignedById)?.title ?? null
+    const projectName =
+      projects.find((project) => Number(project.ID) === task[TaskCodes.project])
+        ?.NAME ?? null
+
     return {
       sprintCode,
       sprintStartDate,
@@ -67,15 +86,15 @@ export class SprintsService {
       description: task[TaskCodes.description] ?? null,
 
       employeeId: task.assignedById ? Number(task.assignedById) : null,
-      employeeName: null,
+      employeeName: employeeName,
 
       projectId: task[TaskCodes.project]
         ? Number(task[TaskCodes.project])
         : null,
-      projectName: null,
+      projectName: projectName,
 
       clientId: task[TaskCodes.client] ? Number(task[TaskCodes.client]) : null,
-      clientName: null,
+      clientName,
 
       stageId: task.stageId ?? null,
       stageName: null,
@@ -162,6 +181,10 @@ export class SprintsService {
       },
     })
 
+    const clients = await this.bitrixService.getClients()
+    const developers = await this.bitrixService.getDevelopers()
+    const projects = await this.bitrixService.getClientsProjects()
+
     const snapshots = tasks.map((task) =>
       this.mapTaskToSnapshot(
         task,
@@ -169,6 +192,9 @@ export class SprintsService {
         sprintStartDate,
         sprintEndDate,
         today,
+        clients,
+        developers,
+        projects,
       ),
     )
 

@@ -7,6 +7,8 @@ import {
   EntityTypeIds,
 } from 'src/constants/const'
 import {
+  BitrixClientProjects,
+  BitrixClients,
   BitrixUserResponse,
   BitrixUsersApiResponse,
   UserInfo,
@@ -40,12 +42,93 @@ export class BitrixService {
     return response.data?.result?.items ?? []
   }
 
-  getReportsByUser(
+  async getClients(): Promise<BitrixClients[]> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(Endpoints.lists, {
+          IBLOCK_TYPE_ID: 'lists',
+          IBLOCK_ID: '23',
+          SELECT: ['ID', 'NAME'],
+        }),
+      )
+
+      const items = response.data?.result
+
+      if (!Array.isArray(items)) {
+        console.warn('Expected items to be an array, but got:', items)
+        return []
+      }
+
+      return items
+    } catch (error) {
+      console.error(`Failed to fetch fields`, error)
+      return []
+    }
+  }
+
+  async getDevelopers(): Promise<UserInfo[]> {
+    const { data } = await firstValueFrom(
+      this.httpService.post<{
+        result: {
+          ID: string
+          NAME: string
+          LAST_NAME: string
+          UF_DEPARTMENT: number[]
+          WORK_POSITION: string
+          PERSONAL_PHOTO: string
+        }[]
+      }>(Endpoints.users, {
+        filter: {
+          '@UF_DEPARTMENT': [23, 25],
+        },
+        select: [
+          'NAME',
+          'ID',
+          'LAST_NAME',
+          'UF_DEPARTMENT',
+          'WORK_POSITION',
+          'PERSONAL_PHOTO',
+        ],
+      }),
+    )
+
+    const developers = data?.result
+
+    return developers.map((developer) => ({
+      id: String(developer.ID),
+      title: this.buildUserTitle(developer),
+    }))
+  }
+
+  async getClientsProjects(): Promise<BitrixClientProjects[]> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(Endpoints.lists, {
+          IBLOCK_TYPE_ID: 'lists',
+          IBLOCK_ID: '24',
+        }),
+      )
+
+      const items = response.data?.result
+
+      if (!Array.isArray(items)) {
+        console.warn('Expected items to be an array, but got:', items)
+        return []
+      }
+
+      return items
+    } catch (error) {
+      console.error(`Failed to fetch fields`, error)
+      return []
+    }
+  }
+
+  async getReportsByUser(
     userId: number,
     start: string,
     end: string,
   ): Promise<ReportProps[]> {
-    return this.listItems<ReportProps>({
+    return await this.listItems<ReportProps>({
       entityTypeId: EntityTypeIds.reports,
       select: DAILY_REPORT_SELECT,
       filter: {

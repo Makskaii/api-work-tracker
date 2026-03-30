@@ -14,3 +14,16 @@ export type UserInfo = {
 export type BitrixUsersApiResponse = {
   result: BitrixUserResponse[]
 }
+
+export interface BitrixClients {
+  ID: string
+  NAME: string
+}
+
+export interface BitrixClientProjects {
+  ID: string
+  NAME: string
+  PROPERTY_87: {
+    [key: string]: string
+  }
+}

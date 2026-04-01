@@ -297,7 +297,7 @@ export class DocRecordsService {
 
     return {
       reportId,
-      downloadUrl: `/doc-records/report/${reportId}`,
+      downloadUrl: `doc-records/report/${reportId}`,
     }
   }
 

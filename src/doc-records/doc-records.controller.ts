@@ -11,7 +11,7 @@ import type { Response } from 'express'
 import { DocRecordsService } from './doc-records.service'
 import { CreateDocRecordDto } from './dto/create-doc-record.dto'
 
-@Controller('doc-records')
+@Controller('/doc-records')
 export class DocRecordsController {
   constructor(private readonly docRecordsService: DocRecordsService) {}
 

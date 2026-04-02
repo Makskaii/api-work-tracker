@@ -6,13 +6,11 @@ import { getSprintBorders } from 'src/shared/helpers/getSprintBorders'
 import { BitrixService } from 'src/shared/integrations/bitrix/bitrix.service'
 import { BitrixClientProjects, BitrixClients, UserInfo } from 'src/types/bitrix'
 import { TaskProps } from 'src/types/tasks'
-import { Not, Repository } from 'typeorm'
+import { In, Not, Repository } from 'typeorm'
 import { SprintTaskSnapshot } from './entities/sprint-task-snapshot.entity'
 
 @Injectable()
 export class SprintsService {
-  private readonly logger = new Logger(SprintsService.name)
-
   constructor(
     private readonly bitrixService: BitrixService,
     @InjectRepository(SprintTaskSnapshot)
@@ -20,6 +18,33 @@ export class SprintsService {
   ) {}
 
   private readonly DONE_STAGE_ID = 'DT1072_18:UC_6JNSDG'
+
+  private readonly DEVELOPER_DEPARTMENT_ID = 23
+  private readonly ANALYST_DEPARTMENT_ID = 25
+  private readonly SYNC_DEPARTMENT_IDS = [
+    this.DEVELOPER_DEPARTMENT_ID,
+    this.ANALYST_DEPARTMENT_ID,
+  ]
+
+  private async getSprintUsers() {
+    return await this.bitrixService.getDevelopers({
+      filter: {
+        '@UF_DEPARTMENT': this.SYNC_DEPARTMENT_IDS,
+      },
+    })
+  }
+
+  private buildClientsMap(clients: BitrixClients[]) {
+    return new Map(clients.map((client) => [Number(client.ID), client]))
+  }
+
+  private buildUsersMap(users: UserInfo[]) {
+    return new Map(users.map((user) => [Number(user.id), user]))
+  }
+
+  private buildProjectsMap(projects: BitrixClientProjects[]) {
+    return new Map(projects.map((project) => [Number(project.ID), project]))
+  }
 
   private isCompletedTask(task: TaskProps) {
     return task.stageId === this.DONE_STAGE_ID
@@ -52,30 +77,32 @@ export class SprintsService {
     }
   }
 
-  private getClientsName(clients: BitrixClients[], clientId: number) {
-    if (clientId) {
-      return (
-        clients.find((client) => Number(client.ID) === clientId)?.NAME ?? null
-      )
-    }
-  }
-
   private mapTaskToSnapshot(
     task: TaskProps,
     sprintCode: string,
     sprintStartDate: string,
     sprintEndDate: string,
     today: Dayjs,
-    clients: BitrixClients[],
-    users: UserInfo[],
-    projects: BitrixClientProjects[],
+    clientsMap: Map<number, BitrixClients>,
+    usersMap: Map<number, UserInfo>,
+    projectsMap: Map<number, BitrixClientProjects>,
   ): Partial<SprintTaskSnapshot> {
-    const clientName = this.getClientsName(clients, task[TaskCodes.client])
-    const employeeName =
-      users.find((user) => Number(user.id) === task.assignedById)?.title ?? null
-    const projectName =
-      projects.find((project) => Number(project.ID) === task[TaskCodes.project])
-        ?.NAME ?? null
+    const employeeId = task.assignedById ? Number(task.assignedById) : null
+    const projectId = task[TaskCodes.project]
+      ? Number(task[TaskCodes.project])
+      : null
+    const clientId = task[TaskCodes.client]
+      ? Number(task[TaskCodes.client])
+      : null
+
+    const user = employeeId ? usersMap.get(employeeId) : undefined
+    const project = projectId ? projectsMap.get(projectId) : undefined
+    const client = clientId ? clientsMap.get(clientId) : undefined
+
+    const departmentId =
+      Array.isArray(user?.department) && user.department.length
+        ? Number(user.department[0])
+        : null
 
     return {
       sprintCode,
@@ -85,16 +112,22 @@ export class SprintsService {
       title: task.title ?? '',
       description: task[TaskCodes.description] ?? null,
 
-      employeeId: task.assignedById ? Number(task.assignedById) : null,
-      employeeName: employeeName,
+      employeeId,
+      employeeName: user?.title ?? null,
 
-      projectId: task[TaskCodes.project]
-        ? Number(task[TaskCodes.project])
-        : null,
-      projectName: projectName,
+      departmentId,
+      departmentName:
+        departmentId === 23
+          ? 'Разработка'
+          : departmentId === 25
+            ? 'Аналитика'
+            : null,
 
-      clientId: task[TaskCodes.client] ? Number(task[TaskCodes.client]) : null,
-      clientName,
+      projectId,
+      projectName: project?.NAME ?? null,
+
+      clientId,
+      clientName: client?.NAME ?? null,
 
       stageId: task.stageId ?? null,
       stageName: null,
@@ -159,31 +192,36 @@ export class SprintsService {
     const { today, borders, sprintStartDate, sprintEndDate, sprintCode } =
       this.getCurrentSprintMeta()
 
-    const tasks = await this.bitrixService.listItems<TaskProps>({
-      entityTypeId: EntityTypeIds.tasks,
-      select: [
-        'id',
-        'title',
-        'stageId',
-        'assignedById',
-        'createdTime',
-        'updatedTime',
-        'movedTime',
-        TaskCodes.description,
-        TaskCodes.project,
-        TaskCodes.client,
-        TaskCodes.estimateTime,
-        TaskCodes.sprintDateStart,
-      ],
-      filter: {
-        [`>=${TaskCodes.sprintDateStart}`]: borders.startOfTheWeek,
-        [`<=${TaskCodes.sprintDateStart}`]: borders.endOfTheWeek,
-      },
-    })
+    const [tasks, clients, users, projects] = await Promise.all([
+      this.bitrixService.listItems<TaskProps>({
+        entityTypeId: EntityTypeIds.tasks,
+        select: [
+          'id',
+          'title',
+          'stageId',
+          'assignedById',
+          'createdTime',
+          'updatedTime',
+          'movedTime',
+          TaskCodes.description,
+          TaskCodes.project,
+          TaskCodes.client,
+          TaskCodes.estimateTime,
+          TaskCodes.sprintDateStart,
+        ],
+        filter: {
+          [`>=${TaskCodes.sprintDateStart}`]: borders.startOfTheWeek,
+          [`<=${TaskCodes.sprintDateStart}`]: borders.endOfTheWeek,
+        },
+      }),
+      this.bitrixService.getClients(),
+      this.getSprintUsers(),
+      this.bitrixService.getClientsProjects(),
+    ])
 
-    const clients = await this.bitrixService.getClients()
-    const developers = await this.bitrixService.getDevelopers()
-    const projects = await this.bitrixService.getClientsProjects()
+    const clientsMap = this.buildClientsMap(clients)
+    const usersMap = this.buildUsersMap(users)
+    const projectsMap = this.buildProjectsMap(projects)
 
     const snapshots = tasks.map((task) =>
       this.mapTaskToSnapshot(
@@ -192,9 +230,9 @@ export class SprintsService {
         sprintStartDate,
         sprintEndDate,
         today,
-        clients,
-        developers,
-        projects,
+        clientsMap,
+        usersMap,
+        projectsMap,
       ),
     )
 
@@ -210,10 +248,6 @@ export class SprintsService {
     }
 
     await this.deactivateMissingTasks(sprintCode, actualTaskIds)
-
-    this.logger.log(
-      `Sprint sync completed: sprint=${sprintCode}, fetched=${tasks.length}, active=${actualTaskIds.length}`,
-    )
 
     return {
       sprintCode,
@@ -262,11 +296,20 @@ export class SprintsService {
     }
   }
 
-  async getCurrentSprintDeveloperStats() {
+  async getCurrentSprintEmployeeStats(departmentIds?: number[]) {
     const { sprintCode } = this.getCurrentSprintMeta()
 
+    const where = departmentIds?.length
+      ? {
+          sprintCode,
+          departmentId: In(departmentIds),
+        }
+      : {
+          sprintCode,
+        }
+
     const tasks = await this.sprintTaskSnapshotRepository.find({
-      where: { sprintCode },
+      where,
       order: {
         isActive: 'DESC',
         updatedAt: 'DESC',

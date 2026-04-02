@@ -97,6 +97,12 @@ export class SprintTaskSnapshot {
   @Column({ type: 'boolean', default: true })
   isActive: boolean
 
+  @Column({ type: 'bigint', nullable: true })
+  departmentId: number | null
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  departmentName: string | null
+
   @Column({ type: 'json', nullable: true })
   // biome-ignore lint/suspicious/noExplicitAny: <just for a while>
   raw: Record<string, any> | null

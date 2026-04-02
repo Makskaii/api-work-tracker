@@ -9,6 +9,7 @@ export type BitrixUserResponse = {
 export type UserInfo = {
   id: string
   title: string
+  department?: number[]
 }
 
 export type BitrixUsersApiResponse = {

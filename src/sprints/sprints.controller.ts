@@ -1,4 +1,4 @@
-import { Controller, Get, Post } from '@nestjs/common'
+import { Controller, Get, Post, Query } from '@nestjs/common'
 import { SprintsService } from './sprints.service'
 
 @Controller('sprints')
@@ -16,7 +16,18 @@ export class SprintsController {
   }
 
   @Get('current/developers/stats')
-  async getCurrentSprintDeveloperStats() {
-    return await this.sprintsService.getCurrentSprintDeveloperStats()
+  async getCurrentSprintDeveloperStats(
+    @Query('departmentIds') departmentIds?: string,
+  ) {
+    const parsedDepartmentIds = departmentIds
+      ? departmentIds
+          .split(',')
+          .map((item) => Number(item.trim()))
+          .filter((item) => !Number.isNaN(item))
+      : undefined
+
+    return await this.sprintsService.getCurrentSprintEmployeeStats(
+      parsedDepartmentIds,
+    )
   }
 }

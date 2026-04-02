@@ -66,7 +66,7 @@ export class BitrixService {
     }
   }
 
-  async getDevelopers(): Promise<UserInfo[]> {
+  async getDevelopers(filters: AnyObject): Promise<UserInfo[]> {
     const { data } = await firstValueFrom(
       this.httpService.post<{
         result: {
@@ -79,7 +79,7 @@ export class BitrixService {
         }[]
       }>(Endpoints.users, {
         filter: {
-          '@UF_DEPARTMENT': [23, 25],
+          ...filters,
         },
         select: [
           'NAME',
@@ -97,6 +97,7 @@ export class BitrixService {
     return developers.map((developer) => ({
       id: String(developer.ID),
       title: this.buildUserTitle(developer),
+      department: developer.UF_DEPARTMENT,
     }))
   }
 

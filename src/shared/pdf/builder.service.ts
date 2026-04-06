@@ -32,16 +32,23 @@ export class HtmlBuilderService {
           String(task[TaskCodes.description] ?? ''),
         ).replace(/\n/g, '<br />')
 
-        // const spent =
-        //   typeof task.timeSpent === 'number' && task.timeSpent > 0
-        //     ? `${this.escapeHtml(String(task.timeSpent))} ч.`
-        //     : null
+        const result = this.escapeHtml(
+          String(task[TaskCodes.result] ?? ''),
+        ).replace(/\n/g, '<br />')
+
+        const estimateTime =
+          typeof Number(task[TaskCodes.estimateTime]) === 'number' &&
+          Number(task[TaskCodes.estimateTime]) > 0
+            ? `${this.escapeHtml(String(task[TaskCodes.estimateTime]))} ч.`
+            : null
 
         return `
           <div class="task-entry">
             <div class="task-line">
               <span class="task-line-number">${index + 1}.</span>
               <span class="task-line-title">${this.escapeHtml(task.title ?? '')}</span>
+               <span class="task-line-title">${estimateTime}</span>
+               
             </div>
 
             ${
@@ -53,6 +60,19 @@ export class HtmlBuilderService {
                 `
                 : ''
             }
+               <div class="task-line">
+              <span class="task-line-title">${'Результат:'}</span>
+              </div>
+             ${
+               result
+                 ? `
+                  <div class="task-description">
+                    ${result}
+                  </div>
+                `
+                 : ''
+             }
+
           </div>
         `
       })

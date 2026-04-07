@@ -4,8 +4,14 @@ import { BitrixClients, ClientProjects } from 'src/types/bitrix'
 import { GroupedTasksWithTimeSpent, TaskWithTimeSpent } from 'src/types/reports'
 import { TaskProps } from 'src/types/tasks'
 
+type SummaryRow = {
+  label: string
+  value: string
+}
+
 type BuildReportParams = {
   groupedTasks: GroupedTasksWithTimeSpent
+  summaryRows: SummaryRow[]
   periodText: string
   departmentTitle?: string
   logoUrl?: string
@@ -31,6 +37,7 @@ type BuildClientReportParams = {
 export class HtmlBuilderService {
   buildReportHtml({
     groupedTasks,
+    summaryRows,
     periodText,
     departmentTitle = 'отдела разработки',
     watermarkUrl,
@@ -43,6 +50,17 @@ export class HtmlBuilderService {
 
         return bTime - aTime
       })
+
+    const summaryTableHtml = summaryRows
+      .map(
+        (row) => `
+          <tr>
+            <td>${this.escapeHtml(row.label)}</td>
+            <td>${this.escapeHtml(row.value)}</td>
+          </tr>
+        `,
+      )
+      .join('')
 
     const tasksHtml = allTasks
       .map((task, index) => {
@@ -65,7 +83,7 @@ export class HtmlBuilderService {
             <div class="task-line">
               <span class="task-line-number">${index + 1}.</span>
               <span class="task-line-title">${this.escapeHtml(task.title ?? '')}</span>
-               <span class="task-line-title">${estimateTime}</span>
+              <span class="task-line-title">${'Затрачено:'}${estimateTime}</span>
                
             </div>
 
@@ -230,6 +248,8 @@ export class HtmlBuilderService {
               text-align: justify;
               white-space: normal;
               word-break: break-word;
+                break-inside: avoid;
+              page-break-inside: avoid;
             }
 
             .empty {
@@ -271,6 +291,22 @@ export class HtmlBuilderService {
                   </li>
                 </ol>
               </li>
+
+
+              
+                  <div class="summary-table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th style="background:rgb(60, 134, 140)">Показатель</th>
+                        <th style="background:rgb(60, 134, 140)">Значение</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${summaryTableHtml}
+                    </tbody>
+                  </table>
+                </div>
 
               <li>
                 <div class="section-title">Перечень задач</div>

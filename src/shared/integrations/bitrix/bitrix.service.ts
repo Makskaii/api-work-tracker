@@ -2,6 +2,7 @@ import { HttpService } from '@nestjs/axios'
 import { Injectable } from '@nestjs/common'
 import { firstValueFrom } from 'rxjs'
 import {
+  ClientsCodes,
   DAILY_REPORT_SELECT,
   Endpoints,
   EntityTypeIds,
@@ -11,6 +12,7 @@ import {
   BitrixClients,
   BitrixUserResponse,
   BitrixUsersApiResponse,
+  ClientProjects,
   UserInfo,
 } from 'src/types/bitrix'
 import { ReportProps } from 'src/types/reports'
@@ -120,6 +122,50 @@ export class BitrixService {
       return items
     } catch (error) {
       console.error(`Failed to fetch fields`, error)
+      return []
+    }
+  }
+
+  async getProjects(client: BitrixClients): Promise<ClientProjects[]> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(Endpoints.crmItems, {
+          params: {
+            entityTypeId: EntityTypeIds.projects,
+            filter: {
+              [ClientsCodes.client]: client.ID,
+            },
+            select: [
+              'id',
+              'createdBy',
+              'updatedBy',
+              'title',
+              'movedBy',
+              'createdTime',
+              'updatedTime',
+              'movedTime',
+              'categoryId',
+              'assignedById',
+              'lastActivityBy',
+              'lastActivityTime',
+              ClientsCodes.title,
+              ClientsCodes.client,
+              'projectId',
+            ],
+          },
+        }),
+      )
+
+      const items = response.data?.result.items
+
+      if (!Array.isArray(items)) {
+        console.warn('Expected items to be an array, but got:', items)
+        return []
+      }
+
+      return items
+    } catch (error) {
+      console.error(`Failed to fetch projects`, error)
       return []
     }
   }

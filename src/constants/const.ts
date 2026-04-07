@@ -34,6 +34,7 @@ export const Endpoints = {
 export const EntityTypeIds = {
   reports: 1060,
   tasks: 1072,
+  projects: 1092,
 }
 
 export enum DtoFieldsDailyReports {
@@ -43,6 +44,11 @@ export enum DtoFieldsDailyReports {
   project = 'ufCrm11_1772012010',
   activityType = 'ufCrm11_1770804288638',
   parentId = 'parentId1072',
+}
+
+export enum ClientsCodes {
+  client = 'ufCrm20_1773412189',
+  title = 'ufCrm20_1771940818371',
 }
 
 export enum ActivityType {

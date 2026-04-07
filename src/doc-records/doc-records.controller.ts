@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   Res,
   StreamableFile,
 } from '@nestjs/common'
@@ -25,7 +26,16 @@ export class DocRecordsController {
   @Post('report')
   async createReport(@Body() data: CreateDocRecordDto) {
     return await this.docRecordsService.prepareReport(
-      data.projectId,
+      data.id,
+      data.startOfThePeriod,
+      data.endOfThePeriod,
+    )
+  }
+
+  @Post('client-report')
+  async getClientReport(@Body() data: CreateDocRecordDto) {
+    return await this.docRecordsService.prepareClientReport(
+      data.id,
       data.startOfThePeriod,
       data.endOfThePeriod,
     )

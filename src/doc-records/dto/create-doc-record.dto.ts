@@ -1,9 +1,9 @@
-import { IsNotEmpty, IsString } from 'class-validator'
+import { IsDateString, IsNotEmpty, IsString } from 'class-validator'
 
 export class CreateDocRecordDto {
   @IsString()
   @IsNotEmpty()
-  projectId: string
+  id: string
 
   @IsString()
   @IsNotEmpty()

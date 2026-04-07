@@ -4,6 +4,7 @@ import dayjs from 'dayjs'
 import fs from 'fs'
 import path from 'path'
 import {
+  ClientsCodes,
   DailyReportCodes,
   EntityTypeIds,
   TASK_SELECT_FIELDS,
@@ -12,6 +13,11 @@ import {
 import { BitrixService } from 'src/shared/integrations/bitrix/bitrix.service'
 import { HtmlBuilderService } from 'src/shared/pdf/builder.service'
 import { PdfService } from 'src/shared/pdf/pdf.service'
+import {
+  BitrixClientProjects,
+  BitrixClients,
+  ClientProjects,
+} from 'src/types/bitrix'
 import {
   GroupedTasksWithTimeSpent,
   ReportProps,
@@ -23,6 +29,12 @@ type PreparedReport = {
   buffer: Buffer
   filename: string
   createdAt: number
+}
+
+export type ProjectFromList = {
+  id: string
+  name: string
+  projectId: string
 }
 
 @Injectable()
@@ -182,7 +194,7 @@ export class DocRecordsService {
         [TaskCodes.project]: projId,
       },
     })
-    console.log({ tasks })
+
     const normalizedTasks = Array.isArray(tasks) ? tasks : []
     const taskIds = normalizedTasks.map((task) => String(task.id))
 
@@ -320,6 +332,234 @@ export class DocRecordsService {
       if (now - report.createdAt > this.ttlMs) {
         this.reports.delete(reportId)
       }
+    }
+  }
+
+  private getSinglePropertyValue = (
+    property?: Record<string, string> | null,
+  ): string => {
+    if (!property) return ''
+
+    const value = Object.values(property)[0]
+
+    return value ? String(value) : ''
+  }
+  async fetchProjectsByClient(
+    clients: BitrixClients[],
+    projectsFromList: ProjectFromList[],
+  ) {
+    if (!clients) return []
+
+    try {
+      const response = await Promise.all(
+        clients.map(async (client) => {
+          const projects = await this.bitrixService.listItems<ClientProjects>({
+            entityTypeId: EntityTypeIds.projects,
+            filter: {
+              [ClientsCodes.client]: client.ID,
+            },
+          })
+
+          const projectsWithRealId = (projects ?? []).map((project) => {
+            const projectTitle = String(project.title ?? '')
+              .trim()
+              .toLowerCase()
+
+            const matchedProject = projectsFromList.find(
+              (listProject) =>
+                listProject.name.trim().toLowerCase() === projectTitle,
+            )
+
+            return {
+              ...project,
+              projectId: matchedProject?.id ?? '',
+            }
+          })
+
+          return {
+            ...client,
+            projects: projectsWithRealId,
+          }
+        }),
+      )
+
+      return response
+    } catch (error) {
+      console.log(error)
+      return []
+    }
+  }
+
+  private mapProjectsFromList = (
+    items: BitrixClientProjects[],
+  ): ProjectFromList[] => {
+    return items
+      .map((element) => ({
+        id: String(element.ID),
+        name: String(element.NAME ?? ''),
+        projectId: this.getSinglePropertyValue(element.PROPERTY_87),
+      }))
+      .filter((item) => item.projectId)
+  }
+
+  async prepareClientReport(clientId: string, start: string, end: string) {
+    this.clearExpiredReports()
+
+    const periodStart = dayjs(start).subtract(7, 'day').format('YYYY-MM-DD')
+    const periodEnd = end
+
+    const clients = await this.bitrixService.getClients()
+    const projectList = await this.bitrixService.getClientsProjects()
+
+    const normalizedProjects = this.mapProjectsFromList(projectList)
+
+    const data = await this.fetchProjectsByClient(clients, normalizedProjects)
+
+    const client = data.find((c) => String(c.ID) === String(clientId))
+
+    if (!client) {
+      throw new NotFoundException(
+        `Client with id ${clientId} not found or has no projects`,
+      )
+    }
+
+    const result: {
+      project: ClientProjects
+      tasks: TaskProps[]
+    }[] = []
+
+    for (const project of client.projects) {
+      const tasks = await this.bitrixService.listItems<TaskProps>({
+        entityTypeId: EntityTypeIds.tasks,
+        select: TASK_SELECT_FIELDS,
+        filter: {
+          [`>=${TaskCodes.sprintDateStart}`]: periodStart,
+          [`<=${TaskCodes.sprintDateStart}`]: periodEnd,
+          stageId: 'DT1072_18:UC_6JNSDG',
+          [TaskCodes.project]: project.projectId,
+        },
+      })
+
+      result.push({
+        project,
+        tasks,
+      })
+    }
+
+    const parseEstimate = (value: unknown): number => {
+      if (typeof value === 'number') return value
+
+      if (typeof value === 'string') {
+        const normalized = value.replace(',', '.').trim()
+        const parsed = Number(normalized)
+        return Number.isFinite(parsed) ? parsed : 0
+      }
+
+      return 0
+    }
+
+    const isInRange = (date: string, start: string, end: string) => {
+      const d = dayjs(date)
+      return (
+        d.isSame(start, 'day') ||
+        d.isSame(end, 'day') ||
+        (d.isAfter(start, 'day') && d.isBefore(end, 'day'))
+      )
+    }
+
+    const getSprintDates = (task: TaskProps): string[] => {
+      const value = task[TaskCodes.sprintDateStart]
+
+      if (Array.isArray(value)) {
+        return value.map((d) => dayjs(d).format('YYYY-MM-DD'))
+      }
+
+      if (typeof value === 'string') {
+        return [dayjs(value).format('YYYY-MM-DD')]
+      }
+
+      return []
+    }
+
+    if (!client) {
+      throw new NotFoundException('Client not found')
+    }
+
+    const firstWeekStart = periodStart
+    const firstWeekEnd = dayjs(periodStart).add(6, 'day').format('YYYY-MM-DD')
+
+    const secondWeekStart = start
+    const secondWeekEnd = end
+
+    const calculateEstimate = (
+      tasks: TaskProps[],
+      start: string,
+      end: string,
+    ) => {
+      return tasks.reduce((sum, task) => {
+        const dates = getSprintDates(task)
+
+        const inPeriod = dates.some((date) => isInRange(date, start, end))
+
+        if (!inPeriod) return sum
+
+        return sum + parseEstimate(task[TaskCodes.estimateTime])
+      }, 0)
+    }
+
+    const allTasks = result.flatMap((item) => item.tasks ?? [])
+
+    const firstWeekEstimate = calculateEstimate(
+      allTasks,
+      firstWeekStart,
+      firstWeekEnd,
+    )
+
+    const secondWeekEstimate = calculateEstimate(
+      allTasks,
+      secondWeekStart,
+      secondWeekEnd,
+    )
+
+    const totalEstimate = firstWeekEstimate + secondWeekEstimate
+
+    const html = this.htmlService.buildClientReportHtml({
+      client,
+      projects: result,
+      periodText: `${dayjs(periodStart).format('DD.MM.YYYY')} - ${dayjs(periodEnd).format('DD.MM.YYYY')}`,
+      watermarkUrl: this.getImageBase64('public/docsLogo/watermark.jpg'),
+      summaryRows: [
+        {
+          label: 'Общая оценка',
+          value: `${totalEstimate} ч.`,
+        },
+        {
+          label: `Неделя 1 (${dayjs(firstWeekStart).format('DD.MM')} - ${dayjs(firstWeekEnd).format('DD.MM')})`,
+          value: `${firstWeekEstimate} ч.`,
+        },
+        {
+          label: `Неделя 2 (${dayjs(secondWeekStart).format('DD.MM')} - ${dayjs(secondWeekEnd).format('DD.MM')})`,
+          value: `${secondWeekEstimate} ч.`,
+        },
+      ],
+    })
+
+    const pdf = await this.pdfService.generatePdf(
+      html,
+      this.getImageBase64('public/docsLogo/logo.jpg'),
+    )
+
+    const reportId = randomUUID()
+
+    this.reports.set(reportId, {
+      buffer: pdf,
+      filename: `client_report_${clientId}.pdf`,
+      createdAt: Date.now(),
+    })
+
+    return {
+      reportId,
+      downloadUrl: `doc-records/report/${reportId}`,
     }
   }
 }

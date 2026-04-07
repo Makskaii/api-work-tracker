@@ -1,3 +1,5 @@
+import { ClientsCodes } from 'src/constants/const'
+
 export type BitrixUserResponse = {
   ID?: string | number
   NAME?: string
@@ -19,6 +21,24 @@ export type BitrixUsersApiResponse = {
 export interface BitrixClients {
   ID: string
   NAME: string
+}
+
+export interface ClientProjects {
+  id: number
+  createdBy: number
+  updatedBy: number
+  title: string
+  movedBy: number
+  createdTime: string
+  updatedTime: string
+  movedTime: string
+  categoryId: number
+  assignedById: number
+  lastActivityBy: number
+  lastActivityTime: string
+  [ClientsCodes.title]: string
+  [ClientsCodes.client]: number
+  projectId: string
 }
 
 export interface BitrixClientProjects {

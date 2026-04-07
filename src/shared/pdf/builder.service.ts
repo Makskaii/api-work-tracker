@@ -1,12 +1,30 @@
 import { Injectable } from '@nestjs/common'
 import { TaskCodes } from 'src/constants/const'
-import { GroupedTasksWithTimeSpent } from 'src/types/reports'
+import { BitrixClients, ClientProjects } from 'src/types/bitrix'
+import { GroupedTasksWithTimeSpent, TaskWithTimeSpent } from 'src/types/reports'
+import { TaskProps } from 'src/types/tasks'
 
 type BuildReportParams = {
   groupedTasks: GroupedTasksWithTimeSpent
   periodText: string
   departmentTitle?: string
+  logoUrl?: string
   watermarkUrl?: string
+}
+
+type BuildClientReportParams = {
+  client: BitrixClients
+
+  projects: {
+    project: ClientProjects
+    tasks: TaskProps[]
+  }[]
+
+  periodText: string
+
+  watermarkUrl?: string
+
+  summaryRows?: { label: string; value: string }[]
 }
 
 @Injectable()
@@ -272,5 +290,182 @@ export class HtmlBuilderService {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;')
+  }
+
+  buildClientReportHtml({
+    client,
+    projects,
+    periodText,
+    watermarkUrl,
+    summaryRows,
+  }: BuildClientReportParams) {
+    console.log('inhtml', projects)
+
+    const totalEstimateTime = projects.reduce((sum, { tasks }) => {
+      const projectSum = tasks.reduce((taskSum, task) => {
+        const value = Number(task[TaskCodes.estimateTime])
+        return taskSum + (Number.isFinite(value) ? value : 0)
+      }, 0)
+
+      return sum + projectSum
+    }, 0)
+
+    const summaryBlock = summaryRows?.length
+      ? `
+    <table style="margin-bottom:20px; width:100%; border-collapse: collapse;">
+      ${summaryRows
+        .map(
+          (row) => `
+            <tr>
+              <td style="border:1px solid #ccc; padding:8px;">
+                ${row.label}
+              </td>
+              <td style="border:1px solid #ccc; padding:8px;">
+                ${row.value}
+              </td>
+            </tr>
+          `,
+        )
+        .join('')}
+    </table>
+  `
+      : ''
+
+    const projectsHtml = projects
+      .toSorted((a, b) => b.tasks.length - a.tasks.length)
+      .map(({ project, tasks }) => {
+        const projectEstimateTime = tasks.reduce((sum, task) => {
+          const value = Number(task[TaskCodes.estimateTime])
+          return sum + (Number.isFinite(value) ? value : 0)
+        }, 0)
+
+        const tasksHtml = tasks
+          .map((task, index) => {
+            const description = this.escapeHtml(
+              String(task[TaskCodes.description] ?? ''),
+            ).replace(/\n/g, '<br />')
+
+            const result = this.escapeHtml(
+              String(task[TaskCodes.result] ?? ''),
+            ).replace(/\n+/g, '<br />')
+
+            const estimateTime =
+              Number(task[TaskCodes.estimateTime]) > 0
+                ? `${task[TaskCodes.estimateTime]} ч.`
+                : ''
+
+            return `
+          <div class="task-entry">
+            <div class="task-line">
+              <span>${index + 1}.</span>
+              <span>${this.escapeHtml(task.title ?? '')}</span>
+              <span>${estimateTime}</span>
+            </div>
+
+
+             ${
+               description
+                 ? `
+                  <div class="task-description">
+                    ${description}
+                  </div>
+                `
+                 : ''
+             }
+
+          ${
+            result
+              ? `
+              <div class="task-result">
+                <div class="task-result-title">Результат:</div>
+                <div class="task-result-text">${result}</div>
+              </div>
+            `
+              : ''
+          }
+          </div>
+        `
+          })
+          .join('')
+
+        return `
+      <div class="project-block">
+        <h2>
+          ${this.escapeHtml(project.title ?? 'Без названия')}
+          (${projectEstimateTime} ч.)
+        </h2>
+
+        ${tasksHtml || '<div class="empty">Нет задач</div>'}
+      </div>
+    `
+      })
+      .join('')
+
+    return `
+    <html>
+      <head>
+        <style>
+          body { font-family: Arial; font-size: 13px; }
+
+          .project-block {
+            margin-bottom: 24px;
+            page-break-inside: avoid;
+          }
+
+          .task-entry {
+            margin-left: 16px;
+            margin-bottom: 10px;
+          }
+
+          .task-line {
+            font-weight: bold;
+            display: flex;
+            gap: 8px;
+          }
+
+          .task-description {
+            margin-left: 16px;
+          }
+
+          .empty {
+            color: #888;
+          }
+          .task-result {
+            margin-left: 16px;
+            margin-top: 6px;
+          }
+
+          .task-result-title {
+            font-weight: 700;
+            margin-bottom: 2px;
+          }
+
+          .task-result-text {
+            margin-left: 8px;
+            white-space: normal;
+            word-break: break-word;
+          }
+        </style>
+      </head>
+
+      <body>
+        ${watermarkUrl ? `<div class="watermark"></div>` : ''}
+
+        <h1>Отчет по клиенту: ${this.escapeHtml(client.NAME)}</h1>
+
+        <p>Период: ${this.escapeHtml(periodText)}</p>
+        
+
+          ${summaryBlock}
+
+        <p>
+          <strong>Общая оценка по всем проектам:</strong>
+          ${totalEstimateTime} ч.
+        </p>
+
+        ${projectsHtml}
+      </body>
+    </html>
+  `
   }
 }

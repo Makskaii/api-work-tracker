@@ -8,6 +8,7 @@ export enum TaskCodes {
   timeSpent = 'ufCrm14_1771314387497',
   comment = 'ufCrm14_1771314401297',
   sprintDateStart = 'ufCrm14_1771510367281',
+  result = 'ufCrm14_1774261248',
 }
 
 export enum DailyReportCodes {
@@ -82,4 +83,5 @@ export const TASK_SELECT_FIELDS = [
   TaskCodes.reportDate,
   TaskCodes.timeSpent,
   TaskCodes.sprintDateStart,
+  TaskCodes.result,
 ] as const

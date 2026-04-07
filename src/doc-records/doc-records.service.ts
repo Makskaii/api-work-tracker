@@ -179,10 +179,10 @@ export class DocRecordsService {
         [`>=${TaskCodes.sprintDateStart}`]: periodStart,
         [`<=${TaskCodes.sprintDateStart}`]: periodEnd,
         stageId: 'DT1072_18:UC_6JNSDG',
-        [TaskCodes.client]: projId,
+        [TaskCodes.project]: projId,
       },
     })
-
+    console.log({ tasks })
     const normalizedTasks = Array.isArray(tasks) ? tasks : []
     const taskIds = normalizedTasks.map((task) => String(task.id))
 

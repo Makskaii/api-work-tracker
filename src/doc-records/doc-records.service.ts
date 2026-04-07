@@ -68,72 +68,72 @@ export class DocRecordsService {
     return 0
   }
 
-  // private parseNumber(value: unknown): number {
-  //   if (typeof value === 'number') return value
+  private parseNumber(value: unknown): number {
+    if (typeof value === 'number') return value
 
-  //   if (typeof value === 'string') {
-  //     const normalized = value.replace(',', '.').trim()
-  //     const parsed = Number(normalized)
+    if (typeof value === 'string') {
+      const normalized = value.replace(',', '.').trim()
+      const parsed = Number(normalized)
 
-  //     return Number.isFinite(parsed) ? parsed : 0
-  //   }
+      return Number.isFinite(parsed) ? parsed : 0
+    }
 
-  //   return 0
-  // }
+    return 0
+  }
 
-  // private normalizeSprintDates(value: unknown): string[] {
-  //   if (Array.isArray(value)) {
-  //     return value
-  //       .filter(
-  //         (item): item is string =>
-  //           typeof item === 'string' && item.trim() !== '',
-  //       )
-  //       .map((item) => dayjs(item).format('YYYY-MM-DD'))
-  //   }
+  private normalizeSprintDates(value: unknown): string[] {
+    if (Array.isArray(value)) {
+      return value
+        .filter(
+          (item): item is string =>
+            typeof item === 'string' && item.trim() !== '',
+        )
+        .map((item) => dayjs(item).format('YYYY-MM-DD'))
+    }
 
-  //   if (typeof value === 'string' && value.trim() !== '') {
-  //     return [dayjs(value).format('YYYY-MM-DD')]
-  //   }
+    if (typeof value === 'string' && value.trim() !== '') {
+      return [dayjs(value).format('YYYY-MM-DD')]
+    }
 
-  //   return []
-  // }
+    return []
+  }
 
-  // private isDateInRange(date: string, start: string, end: string) {
-  //   const current = dayjs(date)
-  //   const rangeStart = dayjs(start)
-  //   const rangeEnd = dayjs(end)
+  private isDateInRange(date: string, start: string, end: string) {
+    const current = dayjs(date)
+    const rangeStart = dayjs(start)
+    const rangeEnd = dayjs(end)
 
-  //   return (
-  //     current.isSame(rangeStart, 'day') ||
-  //     current.isSame(rangeEnd, 'day') ||
-  //     (current.isAfter(rangeStart, 'day') && current.isBefore(rangeEnd, 'day'))
-  //   )
-  // }
+    return (
+      current.isSame(rangeStart, 'day') ||
+      current.isSame(rangeEnd, 'day') ||
+      (current.isAfter(rangeStart, 'day') && current.isBefore(rangeEnd, 'day'))
+    )
+  }
 
-  // private taskBelongsToPeriod(
-  //   task: TaskWithTimeSpent,
-  //   start: string,
-  //   end: string,
-  // ) {
-  //   const sprintDates = this.normalizeSprintDates(
-  //     task[TaskCodes.sprintDateStart],
-  //   )
+  private taskBelongsToPeriod(
+    task: TaskWithTimeSpent,
+    start: string,
+    end: string,
+  ) {
+    const sprintDates = this.normalizeSprintDates(
+      task[TaskCodes.sprintDateStart],
+    )
 
-  //   return sprintDates.some((date) => this.isDateInRange(date, start, end))
-  // }
+    return sprintDates.some((date) => this.isDateInRange(date, start, end))
+  }
 
-  // private calculateSpentForPeriod(
-  //   tasks: TaskWithTimeSpent[],
-  //   start: string,
-  //   end: string,
-  // ) {
-  //   return tasks
-  //     .filter((task) => this.taskBelongsToPeriod(task, start, end))
-  //     .reduce(
-  //       (sum, task) => sum + this.parseNumber(task[TaskCodes.estimateTime]),
-  //       0,
-  //     )
-  // }
+  private calculateSpentForPeriod(
+    tasks: TaskWithTimeSpent[],
+    start: string,
+    end: string,
+  ) {
+    return tasks
+      .filter((task) => this.taskBelongsToPeriod(task, start, end))
+      .reduce(
+        (sum, task) => sum + this.parseNumber(task[TaskCodes.estimateTime]),
+        0,
+      )
+  }
 
   private async getReportsMapByTaskIds(
     taskIds: string[],
@@ -236,62 +236,39 @@ export class DocRecordsService {
       {},
     )
 
-    // const totalSpent = tasksWithTimeSpent.reduce(
-    //   (sum, task) => sum + task.timeSpent,
-    //   0,
-    // )
-    // const totalSpent = tasksWithTimeSpent.reduce(
-    //   (sum, task) => sum + task.timeSpent,
-    //   0,
-    // )
+    const firstWeekStart = periodStart
+    const firstWeekEnd = dayjs(periodStart).add(6, 'day').format('YYYY-MM-DD')
 
-    // const firstWeekStart = periodStart
-    // const firstWeekEnd = dayjs(periodStart).add(6, 'day').format('YYYY-MM-DD')
+    const secondWeekStart = start
+    const secondWeekEnd = end
 
-    // const secondWeekStart = start
-    // const secondWeekEnd = end
+    const firstWeekSpent = this.calculateSpentForPeriod(
+      tasksWithTimeSpent,
+      firstWeekStart,
+      firstWeekEnd,
+    )
 
-    // const firstWeekSpent = this.calculateSpentForPeriod(
-    //   tasksWithTimeSpent,
-    //   firstWeekStart,
-    //   firstWeekEnd,
-    // )
-
-    // const secondWeekSpent = this.calculateSpentForPeriod(
-    //   tasksWithTimeSpent,
-    //   secondWeekStart,
-    //   secondWeekEnd,
-    // )
+    const secondWeekSpent = this.calculateSpentForPeriod(
+      tasksWithTimeSpent,
+      secondWeekStart,
+      secondWeekEnd,
+    )
 
     const logoBase64 = this.getImageBase64('public/docsLogo/logo.jpg')
 
     const html = this.htmlService.buildReportHtml({
       groupedTasks,
       periodText: `${dayjs(periodStart).format('DD.MM.YYYY')} - ${dayjs(periodEnd).format('DD.MM.YYYY')}`,
-      // summaryRows: [
-
-      //   { label: 'Подразделение', value: 'Отдел разработки' },
-      //   {
-      //     label: 'Отчетный период',
-      //     value: `${dayjs(periodStart).format('DD.MM.YYYY')} - ${dayjs(periodEnd).format('DD.MM.YYYY')}`,
-      //   },
-      //   {
-      //     label: 'Всего задач в перечне',
-      //     value: `${tasksWithTimeSpent.length}`,
-      //   },
-      //   {
-      //     label: 'Общая сумма трудозатрат',
-      //     value: `${totalSpent} ч.`,
-      //   },
-      //   {
-      //     label: `Сумма трудозатрат за неделю 1 (${dayjs(firstWeekStart).format('DD.MM')}-${dayjs(firstWeekEnd).format('DD.MM.YYYY')})`,
-      //     value: `${firstWeekSpent} ч.`,
-      //   },
-      //   {
-      //     label: `Сумма трудозатрат за неделю 2 (${dayjs(secondWeekStart).format('DD.MM')}-${dayjs(secondWeekEnd).format('DD.MM.YYYY')})`,
-      //     value: `${secondWeekSpent} ч.`,
-      //   },
-      // ],
+      summaryRows: [
+        {
+          label: `Сумма трудозатрат за неделю 1 (${dayjs(firstWeekStart).format('DD.MM')}-${dayjs(firstWeekEnd).format('DD.MM.YYYY')})`,
+          value: `${firstWeekSpent} ч.`,
+        },
+        {
+          label: `Сумма трудозатрат за неделю 2 (${dayjs(secondWeekStart).format('DD.MM')}-${dayjs(secondWeekEnd).format('DD.MM.YYYY')})`,
+          value: `${secondWeekSpent} ч.`,
+        },
+      ],
       departmentTitle: 'отдела разработки',
       watermarkUrl: this.getImageBase64('public/docsLogo/watermark.jpg'),
     })

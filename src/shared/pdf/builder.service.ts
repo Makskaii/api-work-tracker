@@ -23,6 +23,8 @@ type BuildClientReportParams = {
   periodText: string
 
   watermarkUrl?: string
+
+  summaryRows?: { label: string; value: string }[]
 }
 
 @Injectable()
@@ -295,6 +297,7 @@ export class HtmlBuilderService {
     projects,
     periodText,
     watermarkUrl,
+    summaryRows,
   }: BuildClientReportParams) {
     console.log('inhtml', projects)
 
@@ -306,6 +309,27 @@ export class HtmlBuilderService {
 
       return sum + projectSum
     }, 0)
+
+    const summaryBlock = summaryRows?.length
+      ? `
+    <table style="margin-bottom:20px; width:100%; border-collapse: collapse;">
+      ${summaryRows
+        .map(
+          (row) => `
+            <tr>
+              <td style="border:1px solid #ccc; padding:8px;">
+                ${row.label}
+              </td>
+              <td style="border:1px solid #ccc; padding:8px;">
+                ${row.value}
+              </td>
+            </tr>
+          `,
+        )
+        .join('')}
+    </table>
+  `
+      : ''
 
     const projectsHtml = projects
       .toSorted((a, b) => b.tasks.length - a.tasks.length)
@@ -430,6 +454,9 @@ export class HtmlBuilderService {
         <h1>Отчет по клиенту: ${this.escapeHtml(client.NAME)}</h1>
 
         <p>Период: ${this.escapeHtml(periodText)}</p>
+        
+
+          ${summaryBlock}
 
         <p>
           <strong>Общая оценка по всем проектам:</strong>

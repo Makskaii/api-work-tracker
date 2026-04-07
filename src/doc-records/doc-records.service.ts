@@ -418,7 +418,9 @@ export class DocRecordsService {
     const client = data.find((c) => String(c.ID) === String(clientId))
 
     if (!client) {
-      throw new NotFoundException('Client not found')
+      throw new NotFoundException(
+        `Client with id ${clientId} not found or has no projects`,
+      )
     }
 
     const result: {
@@ -444,11 +446,102 @@ export class DocRecordsService {
       })
     }
 
+    const parseEstimate = (value: unknown): number => {
+      if (typeof value === 'number') return value
+
+      if (typeof value === 'string') {
+        const normalized = value.replace(',', '.').trim()
+        const parsed = Number(normalized)
+        return Number.isFinite(parsed) ? parsed : 0
+      }
+
+      return 0
+    }
+
+    const isInRange = (date: string, start: string, end: string) => {
+      const d = dayjs(date)
+      return (
+        d.isSame(start, 'day') ||
+        d.isSame(end, 'day') ||
+        (d.isAfter(start, 'day') && d.isBefore(end, 'day'))
+      )
+    }
+
+    const getSprintDates = (task: TaskProps): string[] => {
+      const value = task[TaskCodes.sprintDateStart]
+
+      if (Array.isArray(value)) {
+        return value.map((d) => dayjs(d).format('YYYY-MM-DD'))
+      }
+
+      if (typeof value === 'string') {
+        return [dayjs(value).format('YYYY-MM-DD')]
+      }
+
+      return []
+    }
+
+    if (!client) {
+      throw new NotFoundException('Client not found')
+    }
+
+    const firstWeekStart = periodStart
+    const firstWeekEnd = dayjs(periodStart).add(6, 'day').format('YYYY-MM-DD')
+
+    const secondWeekStart = start
+    const secondWeekEnd = end
+
+    const calculateEstimate = (
+      tasks: TaskProps[],
+      start: string,
+      end: string,
+    ) => {
+      return tasks.reduce((sum, task) => {
+        const dates = getSprintDates(task)
+
+        const inPeriod = dates.some((date) => isInRange(date, start, end))
+
+        if (!inPeriod) return sum
+
+        return sum + parseEstimate(task[TaskCodes.estimateTime])
+      }, 0)
+    }
+
+    const allTasks = result.flatMap((item) => item.tasks ?? [])
+
+    const firstWeekEstimate = calculateEstimate(
+      allTasks,
+      firstWeekStart,
+      firstWeekEnd,
+    )
+
+    const secondWeekEstimate = calculateEstimate(
+      allTasks,
+      secondWeekStart,
+      secondWeekEnd,
+    )
+
+    const totalEstimate = firstWeekEstimate + secondWeekEstimate
+
     const html = this.htmlService.buildClientReportHtml({
       client,
       projects: result,
       periodText: `${dayjs(periodStart).format('DD.MM.YYYY')} - ${dayjs(periodEnd).format('DD.MM.YYYY')}`,
       watermarkUrl: this.getImageBase64('public/docsLogo/watermark.jpg'),
+      summaryRows: [
+        {
+          label: 'Общая оценка',
+          value: `${totalEstimate} ч.`,
+        },
+        {
+          label: `Неделя 1 (${dayjs(firstWeekStart).format('DD.MM')} - ${dayjs(firstWeekEnd).format('DD.MM')})`,
+          value: `${firstWeekEstimate} ч.`,
+        },
+        {
+          label: `Неделя 2 (${dayjs(secondWeekStart).format('DD.MM')} - ${dayjs(secondWeekEnd).format('DD.MM')})`,
+          value: `${secondWeekEstimate} ч.`,
+        },
+      ],
     })
 
     const pdf = await this.pdfService.generatePdf(

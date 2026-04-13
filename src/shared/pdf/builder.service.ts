@@ -213,6 +213,11 @@ export class HtmlBuilderService {
               text-align: justify;
             }
 
+            .summary-table-wrap {
+              margin-top: 10px;
+              max-width: 720px;
+            }
+
             .task-entry {
               margin-bottom: 14px;
               break-inside: avoid;
@@ -349,6 +354,13 @@ export class HtmlBuilderService {
     const summaryBlock = summaryRows?.length
       ? `
     <table style="margin-bottom:20px; width:100%; border-collapse: collapse;">
+      <thead>
+        <tr>
+          <th style="background:rgb(60, 134, 140)">Показатель</th>
+          <th style="background:rgb(60, 134, 140)">Значение</th>
+        </tr>
+      </thead>
+
       ${summaryRows
         .map(
           (row) => `

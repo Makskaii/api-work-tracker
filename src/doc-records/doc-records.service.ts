@@ -21,6 +21,7 @@ import {
 import {
   GroupedTasksWithTimeSpent,
   ReportProps,
+  TaskWithResult,
   TaskWithTimeSpent,
 } from 'src/types/reports'
 import { TaskProps } from 'src/types/tasks'
@@ -402,7 +403,7 @@ export class DocRecordsService {
 
     const result: {
       project: ClientProjects
-      tasks: TaskProps[]
+      tasks: TaskWithResult[]
     }[] = []
 
     for (const project of client.projects) {
@@ -417,9 +418,33 @@ export class DocRecordsService {
         },
       })
 
+      const normalizedTasks = Array.isArray(tasks) ? tasks : []
+      const taskIds = normalizedTasks.map((task) => String(task.id))
+
+      const reportsMap = await this.getReportsMapByTaskIds(
+        taskIds,
+        periodStart,
+        periodEnd,
+      )
+
+      const tasksWithResult: TaskWithResult[] = normalizedTasks.map((task) => {
+        const taskId = String(task.id)
+        const reports = reportsMap[taskId] ?? []
+
+        const result = reports.reduce((sum, report) => {
+          return sum + ` ${report[DailyReportCodes.title]}`
+        }, '')
+
+        return {
+          ...task,
+          result,
+          reports,
+        }
+      })
+
       result.push({
         project,
-        tasks,
+        tasks: tasksWithResult,
       })
     }
 

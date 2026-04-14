@@ -30,4 +30,9 @@ export type TaskWithTimeSpent = TaskProps & {
   reports: ReportProps[]
 }
 
+export type TaskWithResult = TaskProps & {
+  result: string
+  reports: ReportProps[]
+}
+
 export type GroupedTasksWithTimeSpent = Record<string, TaskWithTimeSpent[]>

@@ -1,7 +1,11 @@
 import { Injectable } from '@nestjs/common'
 import { TaskCodes } from 'src/constants/const'
 import { BitrixClients, ClientProjects } from 'src/types/bitrix'
-import { GroupedTasksWithTimeSpent, TaskWithTimeSpent } from 'src/types/reports'
+import {
+  GroupedTasksWithTimeSpent,
+  TaskWithResult,
+  TaskWithTimeSpent,
+} from 'src/types/reports'
 import { TaskProps } from 'src/types/tasks'
 
 type SummaryRow = {
@@ -23,7 +27,7 @@ type BuildClientReportParams = {
 
   projects: {
     project: ClientProjects
-    tasks: TaskProps[]
+    tasks: TaskWithResult[]
   }[]
 
   periodText: string
@@ -66,11 +70,9 @@ export class HtmlBuilderService {
       .map((task, index) => {
         const description = this.escapeHtml(
           String(task[TaskCodes.description] ?? ''),
-        ).replace(/\n/g, '<br />')
+        )
 
-        const result = this.escapeHtml(
-          String(task[TaskCodes.result] ?? ''),
-        ).replace(/\n/g, '<br />')
+        const result = this.escapeHtml(String(task[TaskCodes.result] ?? ''))
 
         const estimateTime =
           typeof Number(task[TaskCodes.estimateTime]) === 'number' &&
@@ -342,41 +344,29 @@ export class HtmlBuilderService {
   }: BuildClientReportParams) {
     console.log('inhtml', projects)
 
-    const totalEstimateTime = projects.reduce((sum, { tasks }) => {
-      const projectSum = tasks.reduce((taskSum, task) => {
-        const value = Number(task[TaskCodes.estimateTime])
-        return taskSum + (Number.isFinite(value) ? value : 0)
-      }, 0)
-
-      return sum + projectSum
-    }, 0)
-
     const summaryBlock = summaryRows?.length
       ? `
-    <table style="margin-bottom:20px; width:100%; border-collapse: collapse;">
-      <thead>
-        <tr>
-          <th style="background:rgb(60, 134, 140)">Показатель</th>
-          <th style="background:rgb(60, 134, 140)">Значение</th>
-        </tr>
-      </thead>
-
-      ${summaryRows
-        .map(
-          (row) => `
+        <table class="summary-table">
+          <thead>
             <tr>
-              <td style="border:1px solid #ccc; padding:8px;">
-                ${row.label}
-              </td>
-              <td style="border:1px solid #ccc; padding:8px;">
-                ${row.value}
-              </td>
+              <th>Показатель</th>
+              <th>Значение</th>
             </tr>
-          `,
-        )
-        .join('')}
-    </table>
-  `
+          </thead>
+          <tbody>
+            ${summaryRows
+              .map(
+                (row) => `
+                  <tr>
+                    <td>${row.label}</td>
+                    <td>${row.value}</td>
+                  </tr>
+                `,
+              )
+              .join('')}
+          </tbody>
+        </table>
+      `
       : ''
 
     const projectsHtml = projects
@@ -393,9 +383,10 @@ export class HtmlBuilderService {
               String(task[TaskCodes.description] ?? ''),
             ).replace(/\n/g, '<br />')
 
-            const result = this.escapeHtml(
-              String(task[TaskCodes.result] ?? ''),
-            ).replace(/\n+/g, '<br />')
+            const result = this.escapeHtml(String(task.result ?? '')).replace(
+              /\n+/g,
+              '<br />',
+            )
 
             const estimateTime =
               Number(task[TaskCodes.estimateTime]) > 0
@@ -437,15 +428,15 @@ export class HtmlBuilderService {
           .join('')
 
         return `
-      <div class="project-block">
-        <h2>
-          ${this.escapeHtml(project.title ?? 'Без названия')}
-          (${projectEstimateTime} ч.)
-        </h2>
+          <div class="project-block">
+            <h2 class="project-title">
+              ${this.escapeHtml(project.title ?? 'Без названия')}
+              (${projectEstimateTime} ч.)
+            </h2>
 
-        ${tasksHtml || '<div class="empty">Нет задач</div>'}
-      </div>
-    `
+            ${tasksHtml || '<div class="empty">Нет задач</div>'}
+          </div>
+        `
       })
       .join('')
 
@@ -453,46 +444,72 @@ export class HtmlBuilderService {
     <html>
       <head>
         <style>
-          body { font-family: Arial; font-size: 13px; }
+        body {
+          font-family: Arial;
+          font-size: 13px;
+        }
 
-          .project-block {
-            margin-bottom: 24px;
-            page-break-inside: avoid;
-          }
+        .summary-table {
+          width: 100%;
+          border-collapse: collapse;
+          margin: 0 0 20px 0;
+        }
 
-          .task-entry {
-            margin-left: 16px;
-            margin-bottom: 10px;
-          }
+        .summary-table th,
+        .summary-table td {
+          border: 1px solid #ccc;
+          padding: 8px;
+          text-align: left;
+          vertical-align: top;
+        }
 
-          .task-line {
-            font-weight: bold;
-            display: flex;
-            gap: 8px;
-          }
+        .summary-table th {
+          background: rgb(60, 134, 140);
+          color: #fff;
+        }
 
-          .task-description {
-            margin-left: 16px;
-          }
+        .project-block {
+          margin-bottom: 24px;
+        }
 
-          .empty {
-            color: #888;
-          }
-          .task-result {
-            margin-left: 16px;
-            margin-top: 6px;
-          }
+        .project-title {
+          margin: 0 0 12px 0;
+          break-after: avoid;
+          page-break-after: avoid;
+        }
 
-          .task-result-title {
-            font-weight: 700;
-            margin-bottom: 2px;
-          }
+        .task-entry {
+          margin-left: 16px;
+          margin-bottom: 10px;
+        }
 
-          .task-result-text {
-            margin-left: 8px;
-            white-space: normal;
-            word-break: break-word;
-          }
+        .task-line {
+          font-weight: bold;
+          display: flex;
+          gap: 8px;
+        }
+
+        .task-description {
+          margin-left: 16px;
+        }
+
+        .task-result {
+          margin-left: 16px;
+          margin-top: 6px;
+        }
+
+        .task-result-title {
+          font-weight: 700;
+          margin-bottom: 2px;
+        }
+
+        .task-result-text {
+          margin-left: 8px;
+        }
+
+        .empty {
+          color: #888;
+        }
         </style>
       </head>
 
@@ -504,13 +521,7 @@ export class HtmlBuilderService {
         <p>Период: ${this.escapeHtml(periodText)}</p>
         
 
-          ${summaryBlock}
-
-        <p>
-          <strong>Общая оценка по всем проектам:</strong>
-          ${totalEstimateTime} ч.
-        </p>
-
+        ${summaryBlock}
         ${projectsHtml}
       </body>
     </html>

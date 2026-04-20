@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common'
-import { TaskCodes } from 'src/constants/const'
+import { DailyReportCodes, TaskCodes } from 'src/constants/const'
 import { BitrixClients, ClientProjects } from 'src/types/bitrix'
 import {
   GroupedTasksWithTimeSpent,
+  ReportProps,
   TaskWithResult,
   TaskWithTimeSpent,
 } from 'src/types/reports'
@@ -35,6 +36,23 @@ type BuildClientReportParams = {
   watermarkUrl?: string
 
   summaryRows?: { label: string; value: string }[]
+
+  commsData?: {
+    firstWeekComms: {
+      start: string
+      end: string
+      spent: number
+      externalComms: ReportProps[]
+      internalComms: ReportProps[]
+    }
+    secondWeekComms: {
+      start: string
+      end: string
+      spent: number
+      externalComms: ReportProps[]
+      internalComms: ReportProps[]
+    }
+  }
 }
 
 @Injectable()
@@ -341,32 +359,128 @@ export class HtmlBuilderService {
     periodText,
     watermarkUrl,
     summaryRows,
+    commsData,
   }: BuildClientReportParams) {
-    console.log('inhtml', projects)
+    const renderCommList = (title: string, items: ReportProps[]) => {
+      const listHtml = items.length
+        ? items
+            .map((report, index) => {
+              const description = this.escapeHtml(
+                String(report[DailyReportCodes.title] ?? ''),
+              ).replace(/\n/g, '<br />')
+
+              const spent = Number(report[DailyReportCodes.timeSpent])
+              const spentText =
+                Number.isFinite(spent) && spent > 0 ? `${spent} ч.` : ''
+
+              return `
+              <div class="comm-entry">
+                <div class="comm-line">
+                  <span>${index + 1}.</span>
+               
+    ${
+      description
+        ? `
+                      <div class="comm-description">
+                        ${description}
+                        <span>${spentText}</span>
+                      </div>
+                    `
+        : ''
+    }
+                </div>
+
+
+              </div>
+            `
+            })
+            .join('')
+        : '<div class="empty">Нет отчетов</div>'
+
+      return `
+      <div class="comm-group">
+        <div class="comm-group-title">${this.escapeHtml(title)}</div>
+        ${listHtml}
+      </div>
+    `
+    }
+
+    const renderWeekBlock = ({
+      title,
+      start,
+      end,
+      spent,
+      externalComms,
+      internalComms,
+    }: {
+      title: string
+      start: string
+      end: string
+      spent: number
+      externalComms: ReportProps[]
+      internalComms: ReportProps[]
+    }) => {
+      return `
+      <div class="week-block">
+        <h2 class="week-title">
+          ${this.escapeHtml(title)} (${this.escapeHtml(start)} — ${this.escapeHtml(end)}) — ${spent} ч.
+        </h2>
+
+        ${renderCommList('External comms', externalComms)}
+        ${renderCommList('Internal comms', internalComms)}
+      </div>
+    `
+    }
+
+    const commsHtml = commsData
+      ? `
+      <div class="comms-section">
+        <h2 class="section-title">Коммуникации</h2>
+
+        ${renderWeekBlock({
+          title: 'Неделя 1',
+          start: commsData.firstWeekComms.start,
+          end: commsData.firstWeekComms.end,
+          spent: commsData.firstWeekComms.spent,
+          externalComms: commsData.firstWeekComms.externalComms,
+          internalComms: commsData.firstWeekComms.internalComms,
+        })}
+
+        ${renderWeekBlock({
+          title: 'Неделя 2',
+          start: commsData.secondWeekComms.start,
+          end: commsData.secondWeekComms.end,
+          spent: commsData.secondWeekComms.spent,
+          externalComms: commsData.secondWeekComms.externalComms,
+          internalComms: commsData.secondWeekComms.internalComms,
+        })}
+      </div>
+    `
+      : ''
 
     const summaryBlock = summaryRows?.length
       ? `
-        <table class="summary-table">
-          <thead>
-            <tr>
-              <th>Показатель</th>
-              <th>Значение</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${summaryRows
-              .map(
-                (row) => `
-                  <tr>
-                    <td>${row.label}</td>
-                    <td>${row.value}</td>
-                  </tr>
-                `,
-              )
-              .join('')}
-          </tbody>
-        </table>
-      `
+      <table class="summary-table">
+        <thead>
+          <tr>
+            <th>Показатель</th>
+            <th>Значение</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${summaryRows
+            .map(
+              (row) => `
+                <tr>
+                  <td>${row.label}</td>
+                  <td>${row.value}</td>
+                </tr>
+              `,
+            )
+            .join('')}
+        </tbody>
+      </table>
+    `
       : ''
 
     const projectsHtml = projects
@@ -394,49 +508,48 @@ export class HtmlBuilderService {
                 : ''
 
             return `
-          <div class="task-entry">
-            <div class="task-line">
-              <span>${index + 1}.</span>
-              <span>${this.escapeHtml(task.title ?? '')}</span>
-              <span>${estimateTime}</span>
-            </div>
-
-
-             ${
-               description
-                 ? `
-                  <div class="task-description">
-                    ${description}
-                  </div>
-                `
-                 : ''
-             }
-
-          ${
-            result
-              ? `
-              <div class="task-result">
-                <div class="task-result-title">Результат:</div>
-                <div class="task-result-text">${result}</div>
+            <div class="task-entry">
+              <div class="task-line">
+                <span>${index + 1}.</span>
+                <span>${this.escapeHtml(task.title ?? '')}</span>
+                <span>${estimateTime}</span>
               </div>
-            `
-              : ''
-          }
-          </div>
-        `
+
+              ${
+                description
+                  ? `
+                    <div class="task-description">
+                      ${description}
+                    </div>
+                  `
+                  : ''
+              }
+
+              ${
+                result
+                  ? `
+                    <div class="task-result">
+                      <div class="task-result-title">Результат:</div>
+                      <div class="task-result-text">${result}</div>
+                    </div>
+                  `
+                  : ''
+              }
+            </div>
+          `
           })
           .join('')
 
         return `
-          <div class="project-block">
-            <h2 class="project-title">
-              ${this.escapeHtml(project.title ?? 'Без названия')}
-              (${projectEstimateTime} ч.)
-            </h2>
+        <div class="project-block">
+          <h2 class="project-title">
+            ${this.escapeHtml(project.title ?? 'Без названия')}
+            (${projectEstimateTime} ч.)
+          </h2>
 
-            ${tasksHtml || '<div class="empty">Нет задач</div>'}
-          </div>
-        `
+          ${tasksHtml || '<div class="empty">Нет задач</div>'}
+        </div>
+      `
       })
       .join('')
 
@@ -444,72 +557,110 @@ export class HtmlBuilderService {
     <html>
       <head>
         <style>
-        body {
-          font-family: Arial;
-          font-size: 13px;
-        }
+          body {
+            font-family: Arial;
+            font-size: 13px;
+          }
 
-        .summary-table {
-          width: 100%;
-          border-collapse: collapse;
-          margin: 0 0 20px 0;
-        }
+          .summary-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 0 0 20px 0;
+          }
 
-        .summary-table th,
-        .summary-table td {
-          border: 1px solid #ccc;
-          padding: 8px;
-          text-align: left;
-          vertical-align: top;
-        }
+          .summary-table th,
+          .summary-table td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: left;
+            vertical-align: top;
+          }
 
-        .summary-table th {
-          background: rgb(60, 134, 140);
-          color: #fff;
-        }
+          .summary-table th {
+            background: rgb(60, 134, 140);
+            color: #fff;
+          }
 
-        .project-block {
-          margin-bottom: 24px;
-        }
+          .section-title {
+            margin: 24px 0 12px;
+          }
 
-        .project-title {
-          margin: 0 0 12px 0;
-          break-after: avoid;
-          page-break-after: avoid;
-        }
+          .week-block {
+            margin-bottom: 24px;
+          }
 
-        .task-entry {
-          margin-left: 16px;
-          margin-bottom: 10px;
-        }
+          .week-title {
+            margin: 0 0 10px 0;
+            break-after: avoid;
+            page-break-after: avoid;
+          }
 
-        .task-line {
-          font-weight: bold;
-          display: flex;
-          gap: 8px;
-        }
+          .comm-group {
+            margin: 0 0 16px 16px;
+          }
 
-        .task-description {
-          margin-left: 16px;
-        }
+          .comm-group-title {
+            font-weight: 700;
+            margin-bottom: 8px;
+          }
 
-        .task-result {
-          margin-left: 16px;
-          margin-top: 6px;
-        }
+          .comm-entry {
+            margin-left: 16px;
+            margin-bottom: 10px;
+          }
 
-        .task-result-title {
-          font-weight: 700;
-          margin-bottom: 2px;
-        }
+          .comm-line {
+            font-weight: bold;
+            display: flex;
+            gap: 8px;
+          }
 
-        .task-result-text {
-          margin-left: 8px;
-        }
+          .comm-description {
+            margin-left: 16px;
+          }
 
-        .empty {
-          color: #888;
-        }
+          .project-block {
+            margin-bottom: 24px;
+          }
+
+          .project-title {
+            margin: 0 0 12px 0;
+            break-after: avoid;
+            page-break-after: avoid;
+          }
+
+          .task-entry {
+            margin-left: 16px;
+            margin-bottom: 10px;
+          }
+
+          .task-line {
+            font-weight: bold;
+            display: flex;
+            gap: 8px;
+          }
+
+          .task-description {
+            margin-left: 16px;
+          }
+
+          .task-result {
+            margin-left: 16px;
+            margin-top: 6px;
+          }
+
+          .task-result-title {
+            font-weight: 700;
+            margin-bottom: 2px;
+          }
+
+          .task-result-text {
+            margin-left: 8px;
+          }
+
+          .empty {
+            color: #888;
+          }
         </style>
       </head>
 
@@ -519,9 +670,9 @@ export class HtmlBuilderService {
         <h1>Отчет по клиенту: ${this.escapeHtml(client.NAME)}</h1>
 
         <p>Период: ${this.escapeHtml(periodText)}</p>
-        
 
         ${summaryBlock}
+        ${commsHtml}
         ${projectsHtml}
       </body>
     </html>

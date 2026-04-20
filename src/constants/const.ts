@@ -16,7 +16,7 @@ export enum DailyReportCodes {
   timeSpent = 'ufCrm11_1770627880479',
   taskId = 'ufCrm11_1770627808462',
   project = 'ufCrm11_1772012010',
-  activityType = 'ufCrm11_1770804288638',
+  activityType = 'ufCrm11_1774427281',
   parentId = 'parentId1072',
 }
 
@@ -91,3 +91,18 @@ export const TASK_SELECT_FIELDS = [
   TaskCodes.sprintDateStart,
   TaskCodes.result,
 ] as const
+
+export const reportSelectFields = [
+  'id',
+  'title',
+  'begindate',
+  DailyReportCodes.title,
+  DailyReportCodes.timeSpent,
+  DailyReportCodes.project,
+  DailyReportCodes.taskId,
+  DailyReportCodes.activityType,
+  'assignedById',
+  'createdTime',
+  'lastActivityTime',
+  `parentId${EntityTypeIds.tasks}`,
+]

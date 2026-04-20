@@ -6,7 +6,9 @@ import path from 'path'
 import {
   ClientsCodes,
   DailyReportCodes,
+  Endpoints,
   EntityTypeIds,
+  reportSelectFields,
   TASK_SELECT_FIELDS,
   TaskCodes,
 } from 'src/constants/const'
@@ -141,21 +143,6 @@ export class DocRecordsService {
     start: string,
     end: string,
   ) {
-    const reportSelectFields = [
-      'id',
-      'title',
-      'begindate',
-      DailyReportCodes.title,
-      DailyReportCodes.timeSpent,
-      DailyReportCodes.project,
-      DailyReportCodes.taskId,
-      DailyReportCodes.activityType,
-      'assignedById',
-      'createdTime',
-      'lastActivityTime',
-      `parentId${EntityTypeIds.tasks}`,
-    ]
-
     const reportsResponses = await Promise.all(
       taskIds.map((taskId) =>
         this.bitrixService.listItems<ReportProps>({
@@ -407,6 +394,7 @@ export class DocRecordsService {
     }[] = []
 
     for (const project of client.projects) {
+      console.log({ project })
       const tasks = await this.bitrixService.listItems<TaskProps>({
         entityTypeId: EntityTypeIds.tasks,
         select: TASK_SELECT_FIELDS,
@@ -442,6 +430,11 @@ export class DocRecordsService {
         }
       })
 
+      console.log({
+        project,
+        tasks: tasksWithResult,
+      })
+
       result.push({
         project,
         tasks: tasksWithResult,
@@ -458,6 +451,63 @@ export class DocRecordsService {
       }
 
       return 0
+    }
+
+    const getReportDate = (report: ReportProps): string | null => {
+      console.log({ report })
+      const value = report.begindate
+
+      if (!value) return null
+
+      const formatted = dayjs(value).format('YYYY-MM-DD')
+      return formatted === 'Invalid Date' ? null : formatted
+    }
+
+    const calculateReportTime = (
+      items: ReportProps[],
+      start: string,
+      end: string,
+    ): number => {
+      return items.reduce((sum, report) => {
+        const reportDate = getReportDate(report)
+
+        if (!reportDate || !isInRange(reportDate, start, end)) {
+          return sum
+        }
+
+        return sum + parseEstimate(report[DailyReportCodes.timeSpent])
+      }, 0)
+    }
+
+    const splitReportsByWeeks = (
+      items: ReportProps[],
+      firstWeekStart: string,
+      firstWeekEnd: string,
+      secondWeekStart: string,
+      secondWeekEnd: string,
+    ) => {
+      const firstWeekReports: ReportProps[] = []
+      const secondWeekReports: ReportProps[] = []
+
+      for (const report of items) {
+        const reportDate = getReportDate(report)
+
+        if (!reportDate) continue
+
+        if (isInRange(reportDate, firstWeekStart, firstWeekEnd)) {
+          firstWeekReports.push(report)
+          continue
+        }
+
+        if (isInRange(reportDate, secondWeekStart, secondWeekEnd)) {
+          secondWeekReports.push(report)
+        }
+      }
+
+      return {
+        firstWeekReports,
+        secondWeekReports,
+      }
     }
 
     const isInRange = (date: string, start: string, end: string) => {
@@ -494,11 +544,11 @@ export class DocRecordsService {
     const secondWeekEnd = end
 
     const calculateEstimate = (
-      tasks: TaskProps[],
+      items: TaskProps[],
       start: string,
       end: string,
     ) => {
-      return tasks.reduce((sum, task) => {
+      return items.reduce((sum, task) => {
         const dates = getSprintDates(task)
 
         const inPeriod = dates.some((date) => isInRange(date, start, end))
@@ -510,6 +560,43 @@ export class DocRecordsService {
     }
 
     const allTasks = result.flatMap((item) => item.tasks ?? [])
+
+    const InternalCommsReports =
+      await this.bitrixService.listItems<ReportProps>({
+        entityTypeId: EntityTypeIds.reports,
+        select: reportSelectFields,
+        filter: {
+          [DailyReportCodes.activityType]: '402',
+          [DailyReportCodes.project]: client.ID,
+          '>=begindate': periodStart,
+          '<=begindate': end,
+        },
+      })
+    const ExternalCommsReports =
+      await this.bitrixService.listItems<ReportProps>({
+        entityTypeId: EntityTypeIds.reports,
+        select: reportSelectFields,
+        filter: {
+          [DailyReportCodes.activityType]: '417',
+          [DailyReportCodes.project]: client.ID,
+          '>=begindate': periodStart,
+          '<=begindate': end,
+        },
+      })
+
+    const allReports = [...InternalCommsReports, ...ExternalCommsReports]
+
+    const firstWeekTime = calculateReportTime(
+      allReports,
+      firstWeekStart,
+      firstWeekEnd,
+    )
+
+    const secondWeekTime = calculateReportTime(
+      allReports,
+      secondWeekStart,
+      secondWeekEnd,
+    )
 
     const firstWeekEstimate = calculateEstimate(
       allTasks,
@@ -523,7 +610,16 @@ export class DocRecordsService {
       secondWeekEnd,
     )
 
-    const totalEstimate = firstWeekEstimate + secondWeekEstimate
+    const { firstWeekReports, secondWeekReports } = splitReportsByWeeks(
+      allReports,
+      firstWeekStart,
+      firstWeekEnd,
+      secondWeekStart,
+      secondWeekEnd,
+    )
+
+    const totalEstimate =
+      firstWeekEstimate + secondWeekEstimate + firstWeekTime + secondWeekTime
 
     const html = this.htmlService.buildClientReportHtml({
       client,
@@ -544,6 +640,30 @@ export class DocRecordsService {
           value: `${secondWeekEstimate} ч.`,
         },
       ],
+      commsData: {
+        firstWeekComms: {
+          start: firstWeekStart,
+          end: firstWeekEnd,
+          externalComms: firstWeekReports.filter(
+            (item) => String(item[DailyReportCodes.activityType]) === '417',
+          ),
+          internalComms: firstWeekReports.filter(
+            (item) => String(item[DailyReportCodes.activityType]) === '402',
+          ),
+          spent: firstWeekTime,
+        },
+        secondWeekComms: {
+          start: secondWeekStart,
+          end: secondWeekEnd,
+          externalComms: secondWeekReports.filter(
+            (item) => String(item[DailyReportCodes.activityType]) === '417',
+          ),
+          internalComms: secondWeekReports.filter(
+            (item) => String(item[DailyReportCodes.activityType]) === '402',
+          ),
+          spent: secondWeekTime,
+        },
+      },
     })
 
     const pdf = await this.pdfService.generatePdf(

@@ -145,7 +145,7 @@ export class DocRecordsService {
   ) {
     const reportsResponses = await Promise.all(
       taskIds.map((taskId) =>
-        this.bitrixService.listItems<ReportProps>({
+        this.bitrixService.listAllItems<ReportProps>({
           entityTypeId: EntityTypeIds.reports,
           select: reportSelectFields,
           filter: {
@@ -172,7 +172,7 @@ export class DocRecordsService {
     const periodStart = dayjs(start).subtract(7, 'day').format('YYYY-MM-DD')
     const periodEnd = end
 
-    const tasks = await this.bitrixService.listItems<TaskProps>({
+    const tasks = await this.bitrixService.listAllItems<TaskProps>({
       entityTypeId: EntityTypeIds.tasks,
       select: TASK_SELECT_FIELDS,
       filter: {
@@ -394,8 +394,7 @@ export class DocRecordsService {
     }[] = []
 
     for (const project of client.projects) {
-      console.log({ project })
-      const tasks = await this.bitrixService.listItems<TaskProps>({
+      const tasks = await this.bitrixService.listAllItems<TaskProps>({
         entityTypeId: EntityTypeIds.tasks,
         select: TASK_SELECT_FIELDS,
         filter: {
@@ -538,7 +537,7 @@ export class DocRecordsService {
     }
 
     const firstWeekStart = periodStart
-    const firstWeekEnd = dayjs(periodStart).add(6, 'day').format('YYYY-MM-DD')
+    const firstWeekEnd = dayjs(periodStart).add(4, 'day').format('YYYY-MM-DD')
 
     const secondWeekStart = start
     const secondWeekEnd = end
@@ -562,7 +561,7 @@ export class DocRecordsService {
     const allTasks = result.flatMap((item) => item.tasks ?? [])
 
     const InternalCommsReports =
-      await this.bitrixService.listItems<ReportProps>({
+      await this.bitrixService.listAllItems<ReportProps>({
         entityTypeId: EntityTypeIds.reports,
         select: reportSelectFields,
         filter: {
@@ -573,7 +572,7 @@ export class DocRecordsService {
         },
       })
     const ExternalCommsReports =
-      await this.bitrixService.listItems<ReportProps>({
+      await this.bitrixService.listAllItems<ReportProps>({
         entityTypeId: EntityTypeIds.reports,
         select: reportSelectFields,
         filter: {
@@ -682,6 +681,9 @@ export class DocRecordsService {
     return {
       reportId,
       downloadUrl: `doc-records/report/${reportId}`,
+      fWReports: firstWeekReports,
+      sWReports: secondWeekReports,
+      result,
     }
   }
 }

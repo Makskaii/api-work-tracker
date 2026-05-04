@@ -398,8 +398,8 @@ export class DocRecordsService {
         entityTypeId: EntityTypeIds.tasks,
         select: TASK_SELECT_FIELDS,
         filter: {
-          [`>=${TaskCodes.sprintDateStart}`]: periodStart,
-          [`<=${TaskCodes.sprintDateStart}`]: periodEnd,
+          [`>=lastActivityTime`]: periodStart,
+          [`<=lastActivityTime`]: periodEnd,
           stageId: 'DT1072_18:UC_6JNSDG',
           [TaskCodes.project]: project.projectId,
         },

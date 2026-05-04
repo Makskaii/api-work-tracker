@@ -92,7 +92,7 @@ export class HtmlBuilderService {
 
         const result = this.escapeHtml(String(task[TaskCodes.result] ?? ''))
 
-        const estimateTime =
+        const timeSpent =
           typeof Number(task[TaskCodes.estimateTime]) === 'number' &&
           Number(task[TaskCodes.estimateTime]) > 0
             ? `${this.escapeHtml(String(task[TaskCodes.estimateTime]))} ч.`
@@ -103,7 +103,7 @@ export class HtmlBuilderService {
             <div class="task-line">
               <span class="task-line-number">${index + 1}.</span>
               <span class="task-line-title">${this.escapeHtml(task.title ?? '')}</span>
-              <span class="task-line-title">${'Затрачено:'}${estimateTime}</span>
+              <span class="task-line-title">${'Затрачено:'}${timeSpent}</span>
                
             </div>
 

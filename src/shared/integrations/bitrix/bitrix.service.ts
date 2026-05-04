@@ -26,10 +26,12 @@ export class BitrixService {
     entityTypeId,
     filter,
     select,
+    start,
   }: {
     entityTypeId: number
     select?: readonly string[]
     filter?: AnyObject
+    start?: number
   }): Promise<T[]> {
     const response = await firstValueFrom(
       this.httpService.get(Endpoints.crmItems, {
@@ -37,11 +39,49 @@ export class BitrixService {
           entityTypeId,
           select,
           filter,
+          start,
         },
       }),
     )
 
     return response.data?.result?.items ?? []
+  }
+
+  async listAllItems<T>(params: {
+    entityTypeId: number
+    select?: readonly string[]
+    filter?: AnyObject
+  }): Promise<T[]> {
+    let start = 0
+    let hasNextPage = true
+    const items: T[] = []
+
+    while (hasNextPage) {
+      const response = await firstValueFrom(
+        this.httpService.get(Endpoints.crmItems, {
+          params: {
+            ...params,
+            start,
+          },
+        }),
+      )
+
+      const pageItems = response.data?.result?.items
+
+      if (Array.isArray(pageItems)) {
+        items.push(...pageItems)
+      }
+
+      const next = response.data?.next
+
+      if (typeof next === 'number' && next > 0) {
+        start = next
+      } else {
+        hasNextPage = false
+      }
+    }
+
+    return items
   }
 
   async getClients(): Promise<BitrixClients[]> {

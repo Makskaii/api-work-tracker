@@ -7,6 +7,7 @@ import { AppService } from './app.service'
 import { AuthModule } from './auth/auth.module'
 import { ClientsModule } from './clients/clients.module'
 import { DocRecordsModule } from './doc-records/doc-records.module'
+import { EmployeeModule } from './employee/employee.module'
 import { RedisModule } from './shared/redis/redis.module'
 import { SprintsModule } from './sprints/sprints.module'
 import { UserSprintsModule } from './user-sprints/user-sprints.module'
@@ -38,6 +39,7 @@ import { UserSprintsModule } from './user-sprints/user-sprints.module'
     ClientsModule,
     AuthModule,
     SprintsModule,
+    EmployeeModule,
   ],
   controllers: [AppController],
   providers: [AppService],

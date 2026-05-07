@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import { DataSource } from 'typeorm'
 import { Client } from '../clients/entities/client.entity'
+import { Employee } from '../employee/entity/employee.entity'
 
 export default new DataSource({
   type: 'mysql',
@@ -9,7 +10,7 @@ export default new DataSource({
   username: process.env.DB_USERNAME || 'app_user',
   password: process.env.DB_PASSWORD || 'app_pass',
   database: process.env.DB_NAME || 'analytics_db',
-  entities: [Client],
+  entities: [Client, Employee],
   migrations: [__dirname + '/migrations/**/*{.ts,.js}'],
   synchronize: false,
 })

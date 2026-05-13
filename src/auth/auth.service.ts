@@ -1,10 +1,14 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common'
+import {
+  ForbiddenException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common'
 import { JwtService } from '@nestjs/jwt'
 import { InjectRepository } from '@nestjs/typeorm'
 import { compare } from 'bcryptjs'
 import { Repository } from 'typeorm'
 import { LoginClientDto } from '../clients/dto/login-client.dto'
-import { Client } from '../clients/entities/client.entity'
+import { Client, ClientStatus } from '../clients/entities/client.entity'
 
 @Injectable()
 export class AuthService {
@@ -32,6 +36,14 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password')
     }
 
+    if (client.status !== ClientStatus.Active) {
+      throw new ForbiddenException('Client is inactive')
+    }
+
+    const lastLogin = new Date()
+
+    await this.clientsRepository.update(client.id, { lastLogin })
+
     const payload = {
       sub: client.id,
       email: client.email,
@@ -48,6 +60,8 @@ export class AuthService {
         name: client.name,
         email: client.email,
         crmClientId: client.crmClientId,
+        status: client.status,
+        lastLogin,
       },
     }
   }

@@ -7,6 +7,11 @@ import {
   UpdateDateColumn,
 } from 'typeorm'
 
+export enum ClientStatus {
+  Active = 'active',
+  Inactive = 'inactive',
+}
+
 @Entity('clients')
 @Unique(['crmClientId'])
 export class Client {
@@ -24,6 +29,16 @@ export class Client {
 
   @Column({ name: 'crm_client_id', type: 'bigint' })
   crmClientId!: number
+
+  @Column({
+    type: 'enum',
+    enum: ClientStatus,
+    default: ClientStatus.Active,
+  })
+  status!: ClientStatus
+
+  @Column({ name: 'last_login', type: 'datetime', nullable: true })
+  lastLogin!: Date | null
 
   @CreateDateColumn({
     name: 'created_at',

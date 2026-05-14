@@ -50,27 +50,46 @@ export class BitrixService {
   async getItem<T>({
     entityTypeId,
     id,
-    select,
   }: {
     entityTypeId: number
     id: number
-    select?: readonly string[]
   }): Promise<T | null> {
-    const response = await firstValueFrom(
-      this.httpService.get(Endpoints.item, {
-        params: {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(Endpoints.item, {
           entityTypeId,
           id,
-          select,
-        },
-      }),
-    )
+          useOriginalUfNames: 'N',
+        }),
+      )
 
-    if (response.data?.error) {
-      throw new BadGatewayException(response.data.error_description)
+      if (response.data?.error) {
+        throw new BadGatewayException(response.data.error_description)
+      }
+
+      return response.data?.result?.item ?? null
+    } catch (error) {
+      throw new BadGatewayException(this.getBitrixErrorMessage(error))
     }
+  }
 
-    return response.data?.result?.item ?? null
+  async getCompany<T>(id: number): Promise<T | null> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(Endpoints.company, {
+          id,
+          ID: id,
+        }),
+      )
+
+      if (response.data?.error) {
+        throw new BadGatewayException(response.data.error_description)
+      }
+
+      return response.data?.result ?? null
+    } catch (error) {
+      throw new BadGatewayException(this.getBitrixErrorMessage(error))
+    }
   }
 
   async listAllItems<T>(params: {
@@ -297,5 +316,29 @@ export class BitrixService {
     }
 
     return [user.LAST_NAME, user.NAME].filter(Boolean).join(' ').trim()
+  }
+
+  private getBitrixErrorMessage(error: unknown): string {
+    const responseData =
+      typeof error === 'object' && error !== null && 'response' in error
+        ? (
+            error as {
+              response?: {
+                data?: {
+                  error?: string
+                  error_description?: string
+                  message?: string
+                }
+              }
+            }
+          ).response?.data
+        : null
+
+    return (
+      responseData?.error_description ??
+      responseData?.message ??
+      responseData?.error ??
+      (error instanceof Error ? error.message : 'Bitrix request failed')
+    )
   }
 }

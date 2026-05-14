@@ -46,6 +46,7 @@ export const Endpoints = {
   status: 'crm.status.list',
   lists: 'lists.element.get',
   item: 'crm.item.get',
+  company: 'crm.company.get',
   department: 'department.get',
   calls: 'voximplant.statistic.get',
 }

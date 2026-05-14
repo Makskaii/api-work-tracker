@@ -8,9 +8,9 @@ import { JwtService } from '@nestjs/jwt'
 import { Request } from 'express'
 
 export type ClientJwtPayload = {
-  sub: number
+  sub: number | string
   email: string
-  crmClientId: number
+  crmClientId: number | string
   role: 'client'
 }
 

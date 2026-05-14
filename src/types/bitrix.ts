@@ -6,12 +6,20 @@ export type BitrixUserResponse = {
   LAST_NAME?: string
   SECOND_NAME?: string
   TITLE?: string
+  UF_DEPARTMENT?: number[]
+  WORK_POSITION?: string
+  PERSONAL_PHOTO?: string
 }
 
 export type UserInfo = {
   id: string
   title: string
+  name?: string
+  lastName?: string
+  secondName?: string
   department?: number[]
+  workPosition?: string
+  photo?: string
 }
 
 export type BitrixUsersApiResponse = {

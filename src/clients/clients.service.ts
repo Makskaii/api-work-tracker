@@ -130,11 +130,9 @@ export class ClientsService {
     authClient: ClientJwtPayload,
   ): Promise<ClientCompanyDto> {
     const client = await this.getActiveAuthorizedClient(authClient)
+    const crmClientId = Number(client.crmClientId)
 
-    const company = await this.bitrixService.getItem<ClientCompanyDto>({
-      entityTypeId: EntityTypeIds.companies,
-      id: client.crmClientId,
-    })
+    const company = await this.getBitrixCompany(crmClientId)
 
     if (!company) {
       throw new NotFoundException('Bitrix company not found')
@@ -272,8 +270,14 @@ export class ClientsService {
   private async getActiveAuthorizedClient(
     authClient: ClientJwtPayload,
   ): Promise<Client> {
+    const clientId = Number(authClient.sub)
+
+    if (!Number.isFinite(clientId)) {
+      throw new UnauthorizedException('Invalid client token')
+    }
+
     const client = await this.clientsRepository.findOne({
-      where: { id: authClient.sub },
+      where: { id: clientId },
     })
 
     if (!client) {
@@ -299,6 +303,23 @@ export class ClientsService {
       },
       select: ['id', 'title', ClientsCodes.client],
     })
+  }
+
+  private async getBitrixCompany(
+    crmClientId: number,
+  ): Promise<ClientCompanyDto | null> {
+    try {
+      return await this.bitrixService.getItem<ClientCompanyDto>({
+        entityTypeId: EntityTypeIds.companies,
+        id: crmClientId,
+      })
+    } catch {
+      const company = await this.bitrixService.getCompany<BitrixCompany>(
+        crmClientId,
+      )
+
+      return company ? this.toClientCompanyDto(company) : null
+    }
   }
 
   private getCommunicationReports(
@@ -364,6 +385,17 @@ export class ClientsService {
       title: project.title,
       clientId: this.toNullableNumber(project[ClientsCodes.client]),
       projectId: String(project.projectId ?? id),
+    }
+  }
+
+  private toClientCompanyDto(company: BitrixCompany): ClientCompanyDto {
+    const id = Number(company.ID ?? company.id)
+    const title = company.TITLE ?? company.title
+
+    return {
+      ...company,
+      id,
+      title,
     }
   }
 
@@ -466,6 +498,14 @@ type ClientProjectTeam = {
   [ProjectCodes.analytic]?: ClientTeamRawValue
   [ProjectCodes.devs]?: ClientTeamRawValue
   [ProjectCodes.qa]?: ClientTeamRawValue
+}
+
+type BitrixCompany = {
+  ID?: string | number
+  TITLE?: string
+  id?: string | number
+  title?: string
+  [key: string]: unknown
 }
 
 const CLIENT_TEAM_ROLES: {

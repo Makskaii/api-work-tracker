@@ -1,5 +1,5 @@
 import { HttpService } from '@nestjs/axios'
-import { Injectable } from '@nestjs/common'
+import { BadGatewayException, Injectable } from '@nestjs/common'
 import { firstValueFrom } from 'rxjs'
 import {
   ClientsCodes,
@@ -47,6 +47,32 @@ export class BitrixService {
     return response.data?.result?.items ?? []
   }
 
+  async getItem<T>({
+    entityTypeId,
+    id,
+    select,
+  }: {
+    entityTypeId: number
+    id: number
+    select?: readonly string[]
+  }): Promise<T | null> {
+    const response = await firstValueFrom(
+      this.httpService.get(Endpoints.item, {
+        params: {
+          entityTypeId,
+          id,
+          select,
+        },
+      }),
+    )
+
+    if (response.data?.error) {
+      throw new BadGatewayException(response.data.error_description)
+    }
+
+    return response.data?.result?.item ?? null
+  }
+
   async listAllItems<T>(params: {
     entityTypeId: number
     select?: readonly string[]
@@ -72,9 +98,9 @@ export class BitrixService {
         items.push(...pageItems)
       }
 
-      const next = response.data?.next
+      const next = Number(response.data?.next)
 
-      if (typeof next === 'number' && next > 0) {
+      if (Number.isFinite(next) && next > 0) {
         start = next
       } else {
         hasNextPage = false
@@ -231,32 +257,38 @@ export class BitrixService {
       return []
     }
 
-    const results = await Promise.all(
-      userIds.map(async (userId): Promise<UserInfo | null> => {
-        const response = await firstValueFrom(
-          this.httpService.get<BitrixUsersApiResponse>(Endpoints.users, {
-            params: {
-              filter: {
-                ID: userId,
-              },
-            },
-          }),
-        )
-
-        const user = response.data.result?.[0]
-
-        if (!user?.ID) {
-          return null
-        }
-
-        return {
-          id: String(user.ID),
-          title: this.buildUserTitle(user),
-        }
+    const response = await firstValueFrom(
+      this.httpService.get<BitrixUsersApiResponse>(Endpoints.users, {
+        params: {
+          filter: {
+            '@ID': Array.from(new Set(userIds)),
+          },
+          select: [
+            'ID',
+            'NAME',
+            'LAST_NAME',
+            'SECOND_NAME',
+            'TITLE',
+            'UF_DEPARTMENT',
+            'WORK_POSITION',
+            'PERSONAL_PHOTO',
+          ],
+        },
       }),
     )
 
-    return results.filter((item): item is UserInfo => item !== null)
+    return (response.data.result ?? [])
+      .filter((user) => Boolean(user.ID))
+      .map((user) => ({
+        id: String(user.ID),
+        title: this.buildUserTitle(user),
+        name: user.NAME,
+        lastName: user.LAST_NAME,
+        secondName: user.SECOND_NAME,
+        department: user.UF_DEPARTMENT,
+        workPosition: user.WORK_POSITION,
+        photo: user.PERSONAL_PHOTO,
+      }))
   }
 
   private buildUserTitle(user: BitrixUserResponse): string {

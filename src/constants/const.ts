@@ -9,12 +9,29 @@ export enum TaskCodes {
   comment = 'ufCrm14_1771314401297',
   sprintDateStart = 'ufCrm14_1771510367281',
   result = 'ufCrm14_1774261248',
+
+  linkedTasks = 'ufCrm14_1775462592',
+  hours = 'ufCrm14_1776177413413',
+  deadline = 'ufCrm14_1775128557733',
+  company = 'ufCrm14_1775127945',
+  parentproject = 'parentId1092',
+  taskType = 'ufCrm14_1775231676',
+}
+
+export enum ProjectCodes {
+  pm = 'ASSIGNED_BY_ID',
+  analytic = 'ufCrm20_1777028495',
+  devs = 'ufCrm20_1777028537',
+  qa = 'ufCrm20_1777028582',
+  company = 'ufCrm20_177487974',
+  parentProject = 'ufCrm20_1774856819',
 }
 
 export enum DailyReportCodes {
   title = 'ufCrm11_1770627903531',
   timeSpent = 'ufCrm11_1770627880479',
   taskId = 'ufCrm11_1770627808462',
+  client = 'ufCrm11_1772012010',
   project = 'ufCrm11_1772012010',
   activityType = 'ufCrm11_1774427281',
   parentId = 'parentId1072',
@@ -29,12 +46,16 @@ export const Endpoints = {
   status: 'crm.status.list',
   lists: 'lists.element.get',
   item: 'crm.item.get',
+  department: 'department.get',
+  calls: 'voximplant.statistic.get',
 }
 
 export const EntityTypeIds = {
   reports: 1060,
   tasks: 1072,
   projects: 1092,
+  default: 2,
+  companies: 4,
 }
 
 export enum DtoFieldsDailyReports {
@@ -47,16 +68,9 @@ export enum DtoFieldsDailyReports {
 }
 
 export enum ClientsCodes {
-  client = 'ufCrm20_1773412189',
+  client = 'ufCrm20_1774879746',
   title = 'ufCrm20_1771940818371',
-}
-
-export enum ActivityType {
-  development = 269,
-  clientCall = 270,
-  analitycsCall = 271,
-  dash = 272,
-  devsCall = 275,
+  parentProject = 'ufCrm20_1774856819',
 }
 
 export const DAILY_REPORT_SELECT = [
@@ -81,6 +95,7 @@ export const TASK_SELECT_FIELDS = [
   'stageId',
   'createdBy',
   'movedTime',
+  TaskCodes.client,
   TaskCodes.project,
   TaskCodes.estimateTime,
   TaskCodes.description,
@@ -90,6 +105,10 @@ export const TASK_SELECT_FIELDS = [
   TaskCodes.timeSpent,
   TaskCodes.sprintDateStart,
   TaskCodes.result,
+  TaskCodes.linkedTasks,
+  TaskCodes.hours,
+  TaskCodes.deadline,
+  TaskCodes.parentproject,
 ] as const
 
 export const reportSelectFields = [

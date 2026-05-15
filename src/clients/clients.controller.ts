@@ -10,12 +10,19 @@ import {
   Post,
   Query,
   Req,
+  UploadedFiles,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common'
+import { FilesInterceptor } from '@nestjs/platform-express'
 import type { AuthenticatedClientRequest } from 'src/auth/client-jwt.guard'
 import { ClientJwtGuard } from 'src/auth/client-jwt.guard'
-import { TaskProps } from 'src/types/tasks'
+import {
+  CLIENT_TASK_PROPOSAL_MAX_FILE_SIZE,
+  CLIENT_TASK_PROPOSAL_MAX_FILES,
+} from 'src/constants/const'
 import { ClientsService } from './clients.service'
+import { ChangeClientPurchasedHoursDto } from './dto/change-client-purchased-hours.dto'
 import {
   ClientCompanyDto,
   ClientProjectDto,
@@ -24,8 +31,13 @@ import {
 } from './dto/client-bitrix-response.dto'
 import { ClientPurchasedHoursEventResponseDto } from './dto/client-purchased-hours-event-response.dto'
 import { ClientResponseDto } from './dto/client-response.dto'
-import { ChangeClientPurchasedHoursDto } from './dto/change-client-purchased-hours.dto'
+import { ClientTaskResponseDto } from './dto/client-task-response.dto'
 import { CreateClientDto } from './dto/create-client.dto'
+import {
+  ClientTaskProposalFile,
+  ClientTaskProposalResponseDto,
+  CreateClientTaskProposalDto,
+} from './dto/create-client-task-proposal.dto'
 import { GetClientStatsQueryDto } from './dto/get-client-stats-query.dto'
 import { GetClientTasksQueryDto } from './dto/get-client-tasks-query.dto'
 import { GetClientsQueryDto } from './dto/get-clients-query.dto'
@@ -74,8 +86,25 @@ export class ClientsController {
   getMyTasks(
     @Req() request: AuthenticatedClientRequest,
     @Query() query: GetClientTasksQueryDto,
-  ): Promise<TaskProps[]> {
+  ): Promise<ClientTaskResponseDto[]> {
     return this.clientsService.getMyTasks(request.client, query)
+  }
+
+  @Post('me/tasks/proposals')
+  @UseGuards(ClientJwtGuard)
+  @UseInterceptors(
+    FilesInterceptor('files', CLIENT_TASK_PROPOSAL_MAX_FILES, {
+      limits: {
+        fileSize: CLIENT_TASK_PROPOSAL_MAX_FILE_SIZE,
+      },
+    }),
+  )
+  createMyTaskProposal(
+    @Req() request: AuthenticatedClientRequest,
+    @Body() dto: CreateClientTaskProposalDto,
+    @UploadedFiles() files: ClientTaskProposalFile[] = [],
+  ): Promise<ClientTaskProposalResponseDto> {
+    return this.clientsService.createMyTaskProposal(request.client, dto, files)
   }
 
   @Get('me/stats')

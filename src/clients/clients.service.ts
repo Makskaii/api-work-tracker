@@ -71,6 +71,7 @@ import {
   ClientPurchasedHoursEventType,
 } from './entities/client-purchased-hours-event.entity'
 
+
 @Injectable()
 export class ClientsService {
   constructor(
@@ -397,6 +398,8 @@ export class ClientsService {
       this.getCommunicationReports(client.crmClientId, start, end, '417'),
     ])
 
+
+
     const internalTotal = this.sumReportTime(internalReports)
     const externalTotal = this.sumReportTime(externalReports)
 
@@ -695,10 +698,11 @@ export class ClientsService {
 
     if (start || end) {
       return {
-        [TaskCodes.client]: crmClientId,
-        ...(start ? { [`>=${TaskCodes.sprintDateStart}`]: start } : {}),
-        ...(end ? { [`<=${TaskCodes.sprintDateStart}`]: end } : {}),
+        [TaskCodes.company]: crmClientId,
+        ...(start ? { [`>=createdTime`]: start } : {}),
+        ...(end ? { [`<=createdTime`]: end } : {}),
         ...this.buildClientTasksStatusFilter(status),
+        stageId: TaskStageIds.done
       }
     }
 

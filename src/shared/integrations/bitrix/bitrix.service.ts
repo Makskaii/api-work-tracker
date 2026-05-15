@@ -73,6 +73,115 @@ export class BitrixService {
     }
   }
 
+  async addItem<T>({
+    entityTypeId,
+    fields,
+  }: {
+    entityTypeId: number
+    fields: AnyObject
+  }): Promise<T> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(Endpoints.crmItemAdd, {
+          entityTypeId,
+          fields,
+        }),
+      )
+
+      if (response.data?.error) {
+        throw new BadGatewayException(response.data.error_description)
+      }
+
+      const item = response.data?.result?.item
+
+      if (!item) {
+        throw new BadGatewayException('Bitrix item was not created')
+      }
+
+      return item
+    } catch (error) {
+      throw new BadGatewayException(this.getBitrixErrorMessage(error))
+    }
+  }
+
+  async addTimelineComment({
+    entityId,
+    entityType,
+    comment,
+  }: {
+    entityId: number
+    entityType: string
+    comment: string
+  }): Promise<number> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(Endpoints.crmTimelineCommentAdd, {
+          fields: {
+            ENTITY_ID: entityId,
+            ENTITY_TYPE: entityType,
+            COMMENT: comment,
+          },
+        }),
+      )
+
+      if (response.data?.error) {
+        throw new BadGatewayException(response.data.error_description)
+      }
+
+      const commentId = Number(response.data?.result)
+
+      if (!Number.isFinite(commentId) || commentId <= 0) {
+        throw new BadGatewayException('Bitrix timeline comment was not created')
+      }
+
+      return commentId
+    } catch (error) {
+      throw new BadGatewayException(this.getBitrixErrorMessage(error))
+    }
+  }
+
+  async updateTimelineComment({
+    id,
+    comment,
+    files,
+    ownerTypeId,
+    ownerId,
+  }: {
+    id: number
+    comment: string
+    files: readonly BitrixTimelineFile[]
+    ownerTypeId?: number
+    ownerId?: number
+  }): Promise<number> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(Endpoints.crmTimelineCommentUpdate, {
+          id,
+          fields: {
+            COMMENT: comment,
+            FILES: files,
+          },
+          ...(ownerTypeId ? { ownerTypeId } : {}),
+          ...(ownerId ? { ownerId } : {}),
+        }),
+      )
+
+      if (response.data?.error) {
+        throw new BadGatewayException(response.data.error_description)
+      }
+
+      const updatedCommentId = Number(response.data?.result)
+
+      if (!Number.isFinite(updatedCommentId) || updatedCommentId <= 0) {
+        throw new BadGatewayException('Bitrix timeline comment was not updated')
+      }
+
+      return updatedCommentId
+    } catch (error) {
+      throw new BadGatewayException(this.getBitrixErrorMessage(error))
+    }
+  }
+
   async getCompany<T>(id: number): Promise<T | null> {
     try {
       const response = await firstValueFrom(
@@ -342,3 +451,5 @@ export class BitrixService {
     )
   }
 }
+
+export type BitrixTimelineFile = readonly [filename: string, content: string]

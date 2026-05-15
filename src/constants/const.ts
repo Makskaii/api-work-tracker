@@ -42,6 +42,9 @@ export const Endpoints = {
   groups: 'sonet_group.get',
   users: 'user.get',
   crmItems: 'crm.item.list',
+  crmItemAdd: 'crm.item.add',
+  crmTimelineCommentAdd: 'crm.timeline.comment.add',
+  crmTimelineCommentUpdate: 'crm.timeline.comment.update',
   crmFeilds: 'crm.item.fields',
   status: 'crm.status.list',
   lists: 'lists.element.get',
@@ -58,6 +61,59 @@ export const EntityTypeIds = {
   default: 2,
   companies: 4,
 }
+
+export const CLIENT_TASK_PROPOSAL_CATEGORY_ID = 18
+export const CLIENT_TASK_PROPOSAL_STAGE_ID = 'DT1072_18:UC_8NADXD'
+export const CLIENT_TASK_APPROVAL_STAGE_ID = 'DT1072_18:UC_ZO5QNH'
+export const CLIENT_TASK_PROPOSAL_MAX_FILES = 10
+export const CLIENT_TASK_PROPOSAL_MAX_FILE_SIZE = 10 * 1024 * 1024
+
+export const TaskStageIds = {
+  backlog: 'DT1072_18:NEW',
+  sprint: 'DT1072_18:PREPARATION',
+  inWork: 'DT1072_18:CLIENT',
+  done: 'DT1072_18:UC_6JNSDG',
+  testing: 'DT1072_18:UC_5GG9S1',
+  waiting: 'DT1072_18:UC_A9IWFS',
+  docs: 'DT1072_18:UC_K596F0',
+  approval: CLIENT_TASK_PROPOSAL_STAGE_ID,
+  approvalReview: CLIENT_TASK_APPROVAL_STAGE_ID,
+} as const
+
+export const ClientTaskStatuses = {
+  done: 'Done',
+  inWork: 'In work',
+  backlog: 'Backlog',
+  approval: 'Approval',
+} as const
+
+export const CLIENT_TASK_IN_WORK_STAGE_IDS = [
+  TaskStageIds.sprint,
+  TaskStageIds.inWork,
+  TaskStageIds.testing,
+  TaskStageIds.waiting,
+  TaskStageIds.docs,
+] as const
+
+export const CLIENT_TASK_APPROVAL_STAGE_IDS = [
+  TaskStageIds.approval,
+  TaskStageIds.approvalReview,
+] as const
+
+export const CLIENT_TASK_DONE_STAGE_IDS = [TaskStageIds.done] as const
+export const CLIENT_TASK_BACKLOG_STAGE_IDS = [TaskStageIds.backlog] as const
+
+export const CLIENT_TASK_SELECT_FIELDS = [
+  'id',
+  'title',
+  'stageId',
+  TaskCodes.result,
+  TaskCodes.hours,
+  TaskCodes.client,
+  TaskCodes.parentproject,
+  TaskCodes.description,
+  TaskCodes.comment,
+] as const
 
 export enum DtoFieldsDailyReports {
   title = 'ufCrm11_1770627903531',

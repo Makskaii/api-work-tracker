@@ -1,4 +1,11 @@
-import { IsDateString, IsOptional } from 'class-validator'
+import { IsDateString, IsEnum, IsOptional } from 'class-validator'
+
+export enum ClientTasksStatusFilter {
+  All = 'all',
+  InWork = 'inWork',
+  Done = 'done',
+  Approval = 'approval',
+}
 
 export class GetClientTasksQueryDto {
   @IsOptional()
@@ -12,4 +19,8 @@ export class GetClientTasksQueryDto {
   @IsOptional()
   @IsDateString()
   end?: string
+
+  @IsOptional()
+  @IsEnum(ClientTasksStatusFilter)
+  status?: ClientTasksStatusFilter
 }

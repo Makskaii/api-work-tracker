@@ -6,9 +6,15 @@ import {
 import { getRepositoryToken } from '@nestjs/typeorm'
 import { Test, TestingModule } from '@nestjs/testing'
 import {
+  CLIENT_TASK_APPROVAL_STAGE_IDS,
+  CLIENT_TASK_IN_WORK_STAGE_IDS,
+  CLIENT_TASK_PROPOSAL_CATEGORY_ID,
+  CLIENT_TASK_PROPOSAL_STAGE_ID,
+  CLIENT_TASK_SELECT_FIELDS,
   ClientsCodes,
   DailyReportCodes,
   EntityTypeIds,
+  TaskStageIds,
   TaskCodes,
 } from 'src/constants/const'
 import { BitrixService } from 'src/shared/integrations/bitrix/bitrix.service'
@@ -19,6 +25,7 @@ import {
   ClientPurchasedHoursEventType,
 } from './entities/client-purchased-hours-event.entity'
 import { Client, ClientStatus } from './entities/client.entity'
+import { ClientTasksStatusFilter } from './dto/get-client-tasks-query.dto'
 
 describe('ClientsService', () => {
   let service: ClientsService
@@ -53,9 +60,12 @@ describe('ClientsService', () => {
   }
 
   const bitrixService = {
+    addItem: jest.fn(),
+    addTimelineComment: jest.fn(),
     getItem: jest.fn(),
     listAllItems: jest.fn(),
     getUsersByIds: jest.fn(),
+    updateTimelineComment: jest.fn(),
   }
 
   beforeEach(async () => {
@@ -94,9 +104,21 @@ describe('ClientsService', () => {
 
   it('loads current client tasks through server-side Bitrix integration', async () => {
     clientsRepository.findOne.mockResolvedValue(client)
-    bitrixService.listAllItems.mockResolvedValue([])
+    bitrixService.listAllItems.mockResolvedValue([
+      {
+        id: 123,
+        title: 'Task',
+        stageId: 'DT1072_18:CLIENT',
+        [TaskCodes.result]: 'Result',
+        [TaskCodes.hours]: '2',
+        [TaskCodes.client]: 42,
+        [TaskCodes.parentproject]: 24,
+        [TaskCodes.description]: 'Description',
+        [TaskCodes.comment]: 'Comment',
+      },
+    ])
 
-    await service.getMyTasks({
+    const result = await service.getMyTasks({
       sub: 1,
       email: 'client@example.com',
       crmClientId: 42,
@@ -110,8 +132,22 @@ describe('ClientsService', () => {
           [TaskCodes.company]: 42,
           '>=createdTime': '2026-04-01',
         }),
+        select: CLIENT_TASK_SELECT_FIELDS,
       }),
     )
+    expect(result).toEqual([
+      {
+        id: '123',
+        title: 'Task',
+        status: 'In work',
+        [TaskCodes.result]: 'Result',
+        [TaskCodes.hours]: '2',
+        [TaskCodes.client]: 42,
+        [TaskCodes.parentproject]: 24,
+        [TaskCodes.description]: 'Description',
+        [TaskCodes.comment]: 'Comment',
+      },
+    ])
   })
 
   it('loads current client tasks by sprint period when dates are provided', async () => {
@@ -141,6 +177,203 @@ describe('ClientsService', () => {
         }),
       }),
     )
+  })
+
+  it('filters current client tasks by in-work statuses', async () => {
+    clientsRepository.findOne.mockResolvedValue(client)
+    bitrixService.listAllItems.mockResolvedValue([])
+
+    await service.getMyTasks(
+      {
+        sub: 1,
+        email: 'client@example.com',
+        crmClientId: 42,
+        role: 'client',
+      },
+      {
+        status: ClientTasksStatusFilter.InWork,
+      },
+    )
+
+    expect(bitrixService.listAllItems).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filter: expect.objectContaining({
+          '@stageId': CLIENT_TASK_IN_WORK_STAGE_IDS,
+        }),
+      }),
+    )
+    expect(CLIENT_TASK_IN_WORK_STAGE_IDS).toContain(TaskStageIds.sprint)
+  })
+
+  it('filters current client tasks by approval statuses', async () => {
+    clientsRepository.findOne.mockResolvedValue(client)
+    bitrixService.listAllItems.mockResolvedValue([])
+
+    await service.getMyTasks(
+      {
+        sub: 1,
+        email: 'client@example.com',
+        crmClientId: 42,
+        role: 'client',
+      },
+      {
+        status: ClientTasksStatusFilter.Approval,
+      },
+    )
+
+    expect(bitrixService.listAllItems).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filter: expect.objectContaining({
+          '@stageId': CLIENT_TASK_APPROVAL_STAGE_IDS,
+        }),
+      }),
+    )
+  })
+
+  it('creates current client task proposal in Bitrix and assigns client PM', async () => {
+    clientsRepository.findOne.mockResolvedValue(client)
+    bitrixService.listAllItems.mockResolvedValue([
+      {
+        id: 10,
+        title: 'Project',
+        assignedById: 7,
+        [ClientsCodes.client]: 42,
+      },
+    ])
+    bitrixService.addItem.mockResolvedValue({
+      id: 123,
+      title: 'New task',
+      assignedById: 7,
+      stageId: CLIENT_TASK_PROPOSAL_STAGE_ID,
+      [TaskCodes.description]: 'Task details',
+    })
+
+    const result = await service.createMyTaskProposal(
+      {
+        sub: 1,
+        email: 'client@example.com',
+        crmClientId: 42,
+        role: 'client',
+      },
+      {
+        title: 'New task',
+        description: 'Task details',
+        project: 24,
+      },
+    )
+
+    expect(bitrixService.listAllItems).toHaveBeenCalledWith({
+      entityTypeId: EntityTypeIds.projects,
+      filter: {
+        [ClientsCodes.client]: 42,
+      },
+      select: ['id', 'title', 'assignedById', 'ASSIGNED_BY_ID'],
+    })
+    expect(bitrixService.addItem).toHaveBeenCalledWith({
+      entityTypeId: EntityTypeIds.tasks,
+      fields: expect.objectContaining({
+        title: 'New task',
+        stageId: CLIENT_TASK_PROPOSAL_STAGE_ID,
+        categoryId: CLIENT_TASK_PROPOSAL_CATEGORY_ID,
+        assignedById: 7,
+        [TaskCodes.description]: 'Task details',
+        [TaskCodes.client]: 42,
+        [TaskCodes.company]: 42,
+        [TaskCodes.parentproject]: 24,
+      }),
+    })
+    expect(result).toMatchObject({
+      id: 123,
+      title: 'New task',
+      description: 'Task details',
+      assignedById: 7,
+      stageId: CLIENT_TASK_PROPOSAL_STAGE_ID,
+      timelineCommentId: null,
+      attachedFilesCount: 0,
+    })
+    expect(bitrixService.addTimelineComment).not.toHaveBeenCalled()
+    expect(bitrixService.updateTimelineComment).not.toHaveBeenCalled()
+  })
+
+  it('attaches uploaded files to current client task proposal timeline comment', async () => {
+    clientsRepository.findOne.mockResolvedValue(client)
+    bitrixService.listAllItems.mockResolvedValue([
+      {
+        id: 10,
+        title: 'Project',
+        assignedById: 7,
+        [ClientsCodes.client]: 42,
+      },
+    ])
+    bitrixService.addItem.mockResolvedValue({
+      id: 123,
+      title: 'New task',
+      assignedById: 7,
+      stageId: CLIENT_TASK_PROPOSAL_STAGE_ID,
+      [TaskCodes.description]: 'Task details',
+    })
+    bitrixService.addTimelineComment.mockResolvedValue(555)
+    bitrixService.updateTimelineComment.mockResolvedValue(555)
+
+    const result = await service.createMyTaskProposal(
+      {
+        sub: 1,
+        email: 'client@example.com',
+        crmClientId: 42,
+        role: 'client',
+      },
+      {
+        title: 'New task',
+        description: 'Task details',
+        project: 24,
+      },
+      [
+        {
+          originalname: 'brief.txt',
+          buffer: Buffer.from('hello'),
+          size: 5,
+        },
+      ],
+    )
+
+    expect(bitrixService.addTimelineComment).toHaveBeenCalledWith({
+      entityId: 123,
+      entityType: 'DYNAMIC_1072',
+      comment: 'Task details',
+    })
+    expect(bitrixService.updateTimelineComment).toHaveBeenCalledWith({
+      id: 555,
+      ownerTypeId: EntityTypeIds.tasks,
+      ownerId: 123,
+      comment: 'Task details',
+      files: [['brief.txt', Buffer.from('hello').toString('base64')]],
+    })
+    expect(result).toMatchObject({
+      timelineCommentId: 555,
+      attachedFilesCount: 1,
+    })
+  })
+
+  it('rejects current client task proposal when client PM is missing', async () => {
+    clientsRepository.findOne.mockResolvedValue(client)
+    bitrixService.listAllItems.mockResolvedValue([])
+
+    await expect(
+      service.createMyTaskProposal(
+        {
+          sub: 1,
+          email: 'client@example.com',
+          crmClientId: 42,
+          role: 'client',
+        },
+        {
+          title: 'New task',
+          description: 'Task details',
+          project: 24,
+        },
+      ),
+    ).rejects.toThrow('Client PM not found')
+    expect(bitrixService.addItem).not.toHaveBeenCalled()
   })
 
   it('returns period stats for tasks and communications', async () => {

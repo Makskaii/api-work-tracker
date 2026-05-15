@@ -1,7 +1,7 @@
 import {
   BadRequestException,
-  ForbiddenException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -9,14 +9,25 @@ import {
 import { InjectRepository } from '@nestjs/typeorm'
 import { genSalt, hash } from 'bcryptjs'
 import {
+  CLIENT_TASK_APPROVAL_STAGE_IDS,
+  CLIENT_TASK_BACKLOG_STAGE_IDS,
+  CLIENT_TASK_DONE_STAGE_IDS,
+  CLIENT_TASK_IN_WORK_STAGE_IDS,
+  CLIENT_TASK_PROPOSAL_CATEGORY_ID,
+  CLIENT_TASK_PROPOSAL_STAGE_ID,
+  CLIENT_TASK_SELECT_FIELDS,
   ClientsCodes,
+  ClientTaskStatuses,
   DailyReportCodes,
   EntityTypeIds,
   ProjectCodes,
   TASK_SELECT_FIELDS,
   TaskCodes,
 } from 'src/constants/const'
-import { BitrixService } from 'src/shared/integrations/bitrix/bitrix.service'
+import {
+  BitrixService,
+  BitrixTimelineFile,
+} from 'src/shared/integrations/bitrix/bitrix.service'
 import { UserInfo } from 'src/types/bitrix'
 import { ReportProps } from 'src/types/reports'
 import { TaskProps } from 'src/types/tasks'
@@ -26,6 +37,7 @@ import {
   toClientPurchasedHoursEventResponseDto,
   toClientResponseDto,
 } from './clients.mapper'
+import { ChangeClientPurchasedHoursDto } from './dto/change-client-purchased-hours.dto'
 import {
   ClientCompanyDto,
   ClientProjectDto,
@@ -36,17 +48,25 @@ import {
 } from './dto/client-bitrix-response.dto'
 import { ClientPurchasedHoursEventResponseDto } from './dto/client-purchased-hours-event-response.dto'
 import { ClientResponseDto } from './dto/client-response.dto'
-import { ChangeClientPurchasedHoursDto } from './dto/change-client-purchased-hours.dto'
+import { ClientTaskResponseDto } from './dto/client-task-response.dto'
 import { CreateClientDto } from './dto/create-client.dto'
+import {
+  ClientTaskProposalFile,
+  ClientTaskProposalResponseDto,
+  CreateClientTaskProposalDto,
+} from './dto/create-client-task-proposal.dto'
 import { GetClientStatsQueryDto } from './dto/get-client-stats-query.dto'
-import { GetClientTasksQueryDto } from './dto/get-client-tasks-query.dto'
+import {
+  ClientTasksStatusFilter,
+  GetClientTasksQueryDto,
+} from './dto/get-client-tasks-query.dto'
 import { GetClientsQueryDto } from './dto/get-clients-query.dto'
 import { UpdateClientDto } from './dto/update-client.dto'
+import { Client, ClientStatus } from './entities/client.entity'
 import {
   ClientPurchasedHoursEvent,
   ClientPurchasedHoursEventType,
 } from './entities/client-purchased-hours-event.entity'
-import { Client, ClientStatus } from './entities/client.entity'
 
 @Injectable()
 export class ClientsService {
@@ -235,9 +255,7 @@ export class ClientsService {
     return events.map(toClientPurchasedHoursEventResponseDto)
   }
 
-  async getMyCompany(
-    authClient: ClientJwtPayload,
-  ): Promise<ClientCompanyDto> {
+  async getMyCompany(authClient: ClientJwtPayload): Promise<ClientCompanyDto> {
     const client = await this.getActiveAuthorizedClient(authClient)
     const crmClientId = Number(client.crmClientId)
 
@@ -263,14 +281,57 @@ export class ClientsService {
   async getMyTasks(
     authClient: ClientJwtPayload,
     query: GetClientTasksQueryDto = {},
-  ): Promise<TaskProps[]> {
+  ): Promise<ClientTaskResponseDto[]> {
     const client = await this.getActiveAuthorizedClient(authClient)
 
-    return this.bitrixService.listAllItems<TaskProps>({
+    const tasks = await this.bitrixService.listAllItems<ClientTaskBitrixItem>({
       entityTypeId: EntityTypeIds.tasks,
       filter: this.buildClientTasksFilter(client.crmClientId, query),
-      select: TASK_SELECT_FIELDS,
+      select: CLIENT_TASK_SELECT_FIELDS,
     })
+
+    return tasks.map((task) => this.toClientTaskResponseDto(task))
+  }
+
+  async createMyTaskProposal(
+    authClient: ClientJwtPayload,
+    dto: CreateClientTaskProposalDto,
+    files: ClientTaskProposalFile[] = [],
+  ): Promise<ClientTaskProposalResponseDto> {
+    const client = await this.getActiveAuthorizedClient(authClient)
+    const assignedById = await this.getClientPmId(client.crmClientId)
+
+    const task = await this.bitrixService.addItem<ClientTaskProposalBitrixItem>(
+      {
+        entityTypeId: EntityTypeIds.tasks,
+        fields: {
+          title: dto.title,
+          stageId: CLIENT_TASK_PROPOSAL_STAGE_ID,
+          categoryId: CLIENT_TASK_PROPOSAL_CATEGORY_ID,
+          assignedById,
+          [TaskCodes.description]: dto.description,
+          [TaskCodes.client]: client.crmClientId,
+          [TaskCodes.company]: client.crmClientId,
+          [TaskCodes.parentproject]: dto.project,
+        },
+      },
+    )
+
+    const timelineCommentId = await this.attachFilesToTaskTimelineComment({
+      taskId: Number(task.id),
+      comment: dto.description,
+      files,
+    })
+
+    return {
+      id: Number(task.id),
+      title: task.title,
+      description: task[TaskCodes.description] ?? dto.description,
+      assignedById: Number(task.assignedById),
+      stageId: task.stageId,
+      timelineCommentId,
+      attachedFilesCount: files.length,
+    }
   }
 
   async getMyStats(
@@ -478,6 +539,34 @@ export class ClientsService {
     })
   }
 
+  private async getClientPmId(crmClientId: number): Promise<number> {
+    const projects = await this.bitrixService.listAllItems<ClientProjectTeam>({
+      entityTypeId: EntityTypeIds.projects,
+      filter: {
+        [ClientsCodes.client]: crmClientId,
+      },
+      select: ['id', 'title', 'assignedById', ProjectCodes.pm],
+    })
+
+    const pmIds = Array.from(
+      new Set(
+        projects.flatMap((project) =>
+          this.normalizeUserIds(
+            this.getProjectRoleValue(project, ProjectCodes.pm),
+          ),
+        ),
+      ),
+    )
+
+    const pmId = pmIds[0]
+
+    if (!pmId) {
+      throw new NotFoundException('Client PM not found')
+    }
+
+    return pmId
+  }
+
   private async getBitrixCompany(
     crmClientId: number,
   ): Promise<ClientCompanyDto | null> {
@@ -487,12 +576,54 @@ export class ClientsService {
         id: crmClientId,
       })
     } catch {
-      const company = await this.bitrixService.getCompany<BitrixCompany>(
-        crmClientId,
-      )
+      const company =
+        await this.bitrixService.getCompany<BitrixCompany>(crmClientId)
 
       return company ? this.toClientCompanyDto(company) : null
     }
+  }
+
+  private async attachFilesToTaskTimelineComment({
+    taskId,
+    comment,
+    files,
+  }: {
+    taskId: number
+    comment: string
+    files: ClientTaskProposalFile[]
+  }): Promise<number | null> {
+    if (!files.length) {
+      return null
+    }
+
+    if (!Number.isFinite(taskId) || taskId <= 0) {
+      throw new BadRequestException('Invalid created task id')
+    }
+
+    const timelineCommentId = await this.bitrixService.addTimelineComment({
+      entityId: taskId,
+      entityType: `DYNAMIC_${EntityTypeIds.tasks}`,
+      comment,
+    })
+
+    await this.bitrixService.updateTimelineComment({
+      id: timelineCommentId,
+      ownerTypeId: EntityTypeIds.tasks,
+      ownerId: taskId,
+      comment,
+      files: this.toBitrixTimelineFiles(files),
+    })
+
+    return timelineCommentId
+  }
+
+  private toBitrixTimelineFiles(
+    files: ClientTaskProposalFile[],
+  ): BitrixTimelineFile[] {
+    return files.map((file) => [
+      file.originalname,
+      file.buffer.toString('base64'),
+    ])
   }
 
   private getCommunicationReports(
@@ -517,20 +648,89 @@ export class ClientsService {
     crmClientId: number,
     query: GetClientTasksQueryDto,
   ) {
-    const { createdFrom = '2026-04-01', start, end } = query
+    const { createdFrom = '2026-04-01', start, end, status } = query
 
     if (start || end) {
       return {
         [TaskCodes.client]: crmClientId,
         ...(start ? { [`>=${TaskCodes.sprintDateStart}`]: start } : {}),
         ...(end ? { [`<=${TaskCodes.sprintDateStart}`]: end } : {}),
+        ...this.buildClientTasksStatusFilter(status),
       }
     }
 
     return {
       [TaskCodes.company]: crmClientId,
       '>=createdTime': createdFrom,
+      ...this.buildClientTasksStatusFilter(status),
     }
+  }
+
+  private buildClientTasksStatusFilter(
+    status?: ClientTasksStatusFilter,
+  ): Record<string, readonly string[]> {
+    const stageIds = this.getClientTaskStatusStageIds(status)
+
+    return stageIds.length ? { '@stageId': stageIds } : {}
+  }
+
+  private getClientTaskStatusStageIds(
+    status?: ClientTasksStatusFilter,
+  ): readonly string[] {
+    switch (status) {
+      case ClientTasksStatusFilter.InWork:
+        return CLIENT_TASK_IN_WORK_STAGE_IDS
+      case ClientTasksStatusFilter.Done:
+        return CLIENT_TASK_DONE_STAGE_IDS
+      case ClientTasksStatusFilter.Approval:
+        return CLIENT_TASK_APPROVAL_STAGE_IDS
+      case ClientTasksStatusFilter.All:
+      default:
+        return []
+    }
+  }
+
+  private toClientTaskResponseDto(
+    task: ClientTaskBitrixItem,
+  ): ClientTaskResponseDto {
+    return {
+      id: String(task.id),
+      title: task.title,
+      status: this.getClientTaskStatus(task.stageId),
+      [TaskCodes.result]: task[TaskCodes.result] ?? null,
+      [TaskCodes.hours]: task[TaskCodes.hours] ?? null,
+      [TaskCodes.client]: task[TaskCodes.client] ?? null,
+      [TaskCodes.parentproject]: task[TaskCodes.parentproject] ?? null,
+      [TaskCodes.description]: task[TaskCodes.description] ?? null,
+      [TaskCodes.comment]: task[TaskCodes.comment] ?? null,
+    }
+  }
+
+  private getClientTaskStatus(stageId?: string) {
+    if (this.isStageInGroup(stageId, CLIENT_TASK_DONE_STAGE_IDS)) {
+      return ClientTaskStatuses.done
+    }
+
+    if (this.isStageInGroup(stageId, CLIENT_TASK_APPROVAL_STAGE_IDS)) {
+      return ClientTaskStatuses.approval
+    }
+
+    if (this.isStageInGroup(stageId, CLIENT_TASK_IN_WORK_STAGE_IDS)) {
+      return ClientTaskStatuses.inWork
+    }
+
+    if (this.isStageInGroup(stageId, CLIENT_TASK_BACKLOG_STAGE_IDS)) {
+      return ClientTaskStatuses.backlog
+    }
+
+    return ClientTaskStatuses.inWork
+  }
+
+  private isStageInGroup(
+    stageId: string | undefined,
+    group: readonly string[],
+  ): boolean {
+    return Boolean(stageId && group.includes(stageId))
   }
 
   private sumTaskTime(tasks: TaskProps[]): number {
@@ -713,6 +913,26 @@ type ClientProjectTeam = {
   [ProjectCodes.analytic]?: ClientTeamRawValue
   [ProjectCodes.devs]?: ClientTeamRawValue
   [ProjectCodes.qa]?: ClientTeamRawValue
+}
+
+type ClientTaskProposalBitrixItem = {
+  id: number | string
+  title: string
+  assignedById: number | string
+  stageId: string
+  [TaskCodes.description]?: string | null
+}
+
+type ClientTaskBitrixItem = {
+  id: number | string
+  title: string
+  stageId?: string
+  [TaskCodes.result]?: string | null
+  [TaskCodes.hours]?: string | number | null
+  [TaskCodes.client]?: string | number | null
+  [TaskCodes.parentproject]?: string | number | null
+  [TaskCodes.description]?: string | null
+  [TaskCodes.comment]?: string | null
 }
 
 type BitrixCompany = {

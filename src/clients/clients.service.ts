@@ -13,6 +13,7 @@ import {
   CLIENT_TASK_BACKLOG_STAGE_IDS,
   CLIENT_TASK_DONE_STAGE_IDS,
   CLIENT_TASK_IN_WORK_STAGE_IDS,
+  CLIENT_TASK_NEW_PROPOSAL_STAGE_IDS,
   CLIENT_TASK_PROPOSAL_CATEGORY_ID,
   CLIENT_TASK_PROPOSAL_STAGE_ID,
   CLIENT_TASK_SELECT_FIELDS,
@@ -23,6 +24,7 @@ import {
   ProjectCodes,
   TASK_SELECT_FIELDS,
   TaskCodes,
+  TaskStageIds,
 } from 'src/constants/const'
 import {
   BitrixService,
@@ -37,6 +39,7 @@ import {
   toClientPurchasedHoursEventResponseDto,
   toClientResponseDto,
 } from './clients.mapper'
+import { ApproveClientTaskResponseDto } from './dto/approve-client-task-response.dto'
 import { ChangeClientPurchasedHoursDto } from './dto/change-client-purchased-hours.dto'
 import {
   ClientCompanyDto,
@@ -331,6 +334,46 @@ export class ClientsService {
       stageId: task.stageId,
       timelineCommentId,
       attachedFilesCount: files.length,
+    }
+  }
+
+  async approveMyTask(
+    authClient: ClientJwtPayload,
+    taskId: number,
+  ): Promise<ApproveClientTaskResponseDto> {
+    const client = await this.getActiveAuthorizedClient(authClient)
+    const task = await this.bitrixService.getItem<ClientTaskApprovalBitrixItem>(
+      {
+        entityTypeId: EntityTypeIds.tasks,
+        id: taskId,
+      },
+    )
+
+    if (!task) {
+      throw new NotFoundException('Bitrix task not found')
+    }
+
+    if (Number(task[TaskCodes.client]) !== Number(client.crmClientId)) {
+      throw new ForbiddenException('Task does not belong to current client')
+    }
+
+    if (task.stageId !== TaskStageIds.approval) {
+      throw new BadRequestException('Task is not waiting for client approval')
+    }
+
+    const updatedTask =
+      await this.bitrixService.updateItem<ClientTaskApprovalBitrixItem>({
+        entityTypeId: EntityTypeIds.tasks,
+        id: taskId,
+        fields: {
+          stageId: TaskStageIds.backlog,
+        },
+      })
+
+    return {
+      id: Number(updatedTask.id),
+      stageId: updatedTask.stageId,
+      status: this.getClientTaskStatus(updatedTask.stageId),
     }
   }
 
@@ -682,6 +725,8 @@ export class ClientsService {
         return CLIENT_TASK_IN_WORK_STAGE_IDS
       case ClientTasksStatusFilter.Done:
         return CLIENT_TASK_DONE_STAGE_IDS
+      case ClientTasksStatusFilter.NewProposal:
+        return CLIENT_TASK_NEW_PROPOSAL_STAGE_IDS
       case ClientTasksStatusFilter.Approval:
         return CLIENT_TASK_APPROVAL_STAGE_IDS
       case ClientTasksStatusFilter.All:
@@ -713,6 +758,10 @@ export class ClientsService {
 
     if (this.isStageInGroup(stageId, CLIENT_TASK_APPROVAL_STAGE_IDS)) {
       return ClientTaskStatuses.approval
+    }
+
+    if (this.isStageInGroup(stageId, CLIENT_TASK_NEW_PROPOSAL_STAGE_IDS)) {
+      return ClientTaskStatuses.newProposal
     }
 
     if (this.isStageInGroup(stageId, CLIENT_TASK_IN_WORK_STAGE_IDS)) {
@@ -933,6 +982,12 @@ type ClientTaskBitrixItem = {
   [TaskCodes.parentproject]?: string | number | null
   [TaskCodes.description]?: string | null
   [TaskCodes.comment]?: string | null
+}
+
+type ClientTaskApprovalBitrixItem = {
+  id: number | string
+  stageId: string
+  [TaskCodes.client]?: string | number | null
 }
 
 type BitrixCompany = {

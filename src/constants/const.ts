@@ -43,6 +43,7 @@ export const Endpoints = {
   users: 'user.get',
   crmItems: 'crm.item.list',
   crmItemAdd: 'crm.item.add',
+  crmItemUpdate: 'crm.item.update',
   crmTimelineCommentAdd: 'crm.timeline.comment.add',
   crmTimelineCommentUpdate: 'crm.timeline.comment.update',
   crmFeilds: 'crm.item.fields',
@@ -76,14 +77,15 @@ export const TaskStageIds = {
   testing: 'DT1072_18:UC_5GG9S1',
   waiting: 'DT1072_18:UC_A9IWFS',
   docs: 'DT1072_18:UC_K596F0',
-  approval: CLIENT_TASK_PROPOSAL_STAGE_ID,
-  approvalReview: CLIENT_TASK_APPROVAL_STAGE_ID,
+  newProposal: CLIENT_TASK_PROPOSAL_STAGE_ID,
+  approval: CLIENT_TASK_APPROVAL_STAGE_ID,
 } as const
 
 export const ClientTaskStatuses = {
   done: 'Done',
   inWork: 'In work',
   backlog: 'Backlog',
+  newProposal: 'New proposal',
   approval: 'Approval',
 } as const
 
@@ -97,7 +99,9 @@ export const CLIENT_TASK_IN_WORK_STAGE_IDS = [
 
 export const CLIENT_TASK_APPROVAL_STAGE_IDS = [
   TaskStageIds.approval,
-  TaskStageIds.approvalReview,
+] as const
+export const CLIENT_TASK_NEW_PROPOSAL_STAGE_IDS = [
+  TaskStageIds.newProposal,
 ] as const
 
 export const CLIENT_TASK_DONE_STAGE_IDS = [TaskStageIds.done] as const

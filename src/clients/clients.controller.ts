@@ -22,6 +22,7 @@ import {
   CLIENT_TASK_PROPOSAL_MAX_FILES,
 } from 'src/constants/const'
 import { ClientsService } from './clients.service'
+import { ApproveClientTaskResponseDto } from './dto/approve-client-task-response.dto'
 import { ChangeClientPurchasedHoursDto } from './dto/change-client-purchased-hours.dto'
 import {
   ClientCompanyDto,
@@ -105,6 +106,15 @@ export class ClientsController {
     @UploadedFiles() files: ClientTaskProposalFile[] = [],
   ): Promise<ClientTaskProposalResponseDto> {
     return this.clientsService.createMyTaskProposal(request.client, dto, files)
+  }
+
+  @Patch('me/tasks/:id/approve')
+  @UseGuards(ClientJwtGuard)
+  approveMyTask(
+    @Req() request: AuthenticatedClientRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<ApproveClientTaskResponseDto> {
+    return this.clientsService.approveMyTask(request.client, id)
   }
 
   @Get('me/stats')

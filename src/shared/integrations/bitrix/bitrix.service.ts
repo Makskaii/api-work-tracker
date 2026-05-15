@@ -104,6 +104,40 @@ export class BitrixService {
     }
   }
 
+  async updateItem<T>({
+    entityTypeId,
+    id,
+    fields,
+  }: {
+    entityTypeId: number
+    id: number
+    fields: AnyObject
+  }): Promise<T> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(Endpoints.crmItemUpdate, {
+          entityTypeId,
+          id,
+          fields,
+        }),
+      )
+
+      if (response.data?.error) {
+        throw new BadGatewayException(response.data.error_description)
+      }
+
+      const item = response.data?.result?.item
+
+      if (!item) {
+        throw new BadGatewayException('Bitrix item was not updated')
+      }
+
+      return item
+    } catch (error) {
+      throw new BadGatewayException(this.getBitrixErrorMessage(error))
+    }
+  }
+
   async addTimelineComment({
     entityId,
     entityType,

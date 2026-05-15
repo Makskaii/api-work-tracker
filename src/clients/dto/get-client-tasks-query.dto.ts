@@ -4,6 +4,7 @@ export enum ClientTasksStatusFilter {
   All = 'all',
   InWork = 'inWork',
   Done = 'done',
+  NewProposal = 'newProposal',
   Approval = 'approval',
 }
 

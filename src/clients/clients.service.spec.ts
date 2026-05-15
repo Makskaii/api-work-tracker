@@ -8,6 +8,7 @@ import { Test, TestingModule } from '@nestjs/testing'
 import {
   CLIENT_TASK_APPROVAL_STAGE_IDS,
   CLIENT_TASK_IN_WORK_STAGE_IDS,
+  CLIENT_TASK_NEW_PROPOSAL_STAGE_IDS,
   CLIENT_TASK_PROPOSAL_CATEGORY_ID,
   CLIENT_TASK_PROPOSAL_STAGE_ID,
   CLIENT_TASK_SELECT_FIELDS,
@@ -65,6 +66,7 @@ describe('ClientsService', () => {
     getItem: jest.fn(),
     listAllItems: jest.fn(),
     getUsersByIds: jest.fn(),
+    updateItem: jest.fn(),
     updateTimelineComment: jest.fn(),
   }
 
@@ -203,6 +205,31 @@ describe('ClientsService', () => {
       }),
     )
     expect(CLIENT_TASK_IN_WORK_STAGE_IDS).toContain(TaskStageIds.sprint)
+  })
+
+  it('filters current client tasks by new proposal statuses', async () => {
+    clientsRepository.findOne.mockResolvedValue(client)
+    bitrixService.listAllItems.mockResolvedValue([])
+
+    await service.getMyTasks(
+      {
+        sub: 1,
+        email: 'client@example.com',
+        crmClientId: 42,
+        role: 'client',
+      },
+      {
+        status: ClientTasksStatusFilter.NewProposal,
+      },
+    )
+
+    expect(bitrixService.listAllItems).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filter: expect.objectContaining({
+          '@stageId': CLIENT_TASK_NEW_PROPOSAL_STAGE_IDS,
+        }),
+      }),
+    )
   })
 
   it('filters current client tasks by approval statuses', async () => {
@@ -352,6 +379,91 @@ describe('ClientsService', () => {
       timelineCommentId: 555,
       attachedFilesCount: 1,
     })
+  })
+
+  it('approves current client task and moves it to backlog', async () => {
+    clientsRepository.findOne.mockResolvedValue(client)
+    bitrixService.getItem.mockResolvedValue({
+      id: 123,
+      stageId: TaskStageIds.approval,
+      [TaskCodes.client]: 42,
+    })
+    bitrixService.updateItem.mockResolvedValue({
+      id: 123,
+      stageId: TaskStageIds.backlog,
+      [TaskCodes.client]: 42,
+    })
+
+    const result = await service.approveMyTask(
+      {
+        sub: 1,
+        email: 'client@example.com',
+        crmClientId: 42,
+        role: 'client',
+      },
+      123,
+    )
+
+    expect(bitrixService.getItem).toHaveBeenCalledWith({
+      entityTypeId: EntityTypeIds.tasks,
+      id: 123,
+    })
+    expect(bitrixService.updateItem).toHaveBeenCalledWith({
+      entityTypeId: EntityTypeIds.tasks,
+      id: 123,
+      fields: {
+        stageId: TaskStageIds.backlog,
+      },
+    })
+    expect(result).toEqual({
+      id: 123,
+      stageId: TaskStageIds.backlog,
+      status: 'Backlog',
+    })
+  })
+
+  it('rejects approving task from another client', async () => {
+    clientsRepository.findOne.mockResolvedValue(client)
+    bitrixService.getItem.mockResolvedValue({
+      id: 123,
+      stageId: TaskStageIds.approval,
+      [TaskCodes.client]: 99,
+    })
+
+    await expect(
+      service.approveMyTask(
+        {
+          sub: 1,
+          email: 'client@example.com',
+          crmClientId: 42,
+          role: 'client',
+        },
+        123,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException)
+    expect(bitrixService.updateItem).not.toHaveBeenCalled()
+  })
+
+  it('rejects approving task that is not waiting for client approval', async () => {
+    clientsRepository.findOne.mockResolvedValue(client)
+    bitrixService.getItem.mockResolvedValue({
+      id: 123,
+      stageId: TaskStageIds.backlog,
+      [TaskCodes.client]: 42,
+    })
+
+    await expect(
+      service.approveMyTask(
+        {
+          sub: 1,
+          email: 'client@example.com',
+          crmClientId: 42,
+          role: 'client',
+        },
+        123,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException)
+    expect(bitrixService.updateItem).not.toHaveBeenCalled()
   })
 
   it('rejects current client task proposal when client PM is missing', async () => {

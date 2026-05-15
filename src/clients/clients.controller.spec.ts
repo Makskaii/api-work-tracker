@@ -7,6 +7,7 @@ describe('ClientsController', () => {
   let controller: ClientsController
 
   const clientsService = {
+    approveMyTask: jest.fn(),
     createMyTaskProposal: jest.fn(),
     findAll: jest.fn(),
     getMyCompany: jest.fn(),
@@ -84,6 +85,32 @@ describe('ClientsController', () => {
       request.client,
       dto,
       files,
+    )
+  })
+
+  it('delegates task approval to service', async () => {
+    const request = {
+      client: {
+        sub: 1,
+        email: 'client@example.com',
+        crmClientId: 42,
+        role: 'client',
+      },
+    }
+    const response = {
+      id: 123,
+      stageId: 'DT1072_18:NEW',
+      status: 'Backlog',
+    }
+
+    clientsService.approveMyTask.mockResolvedValue(response)
+
+    await expect(
+      controller.approveMyTask(request as never, 123),
+    ).resolves.toBe(response)
+    expect(clientsService.approveMyTask).toHaveBeenCalledWith(
+      request.client,
+      123,
     )
   })
 })

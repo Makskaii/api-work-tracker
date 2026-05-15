@@ -22,7 +22,9 @@ import {
   ClientStatsDto,
   ClientTeamDto,
 } from './dto/client-bitrix-response.dto'
+import { ClientPurchasedHoursEventResponseDto } from './dto/client-purchased-hours-event-response.dto'
 import { ClientResponseDto } from './dto/client-response.dto'
+import { ChangeClientPurchasedHoursDto } from './dto/change-client-purchased-hours.dto'
 import { CreateClientDto } from './dto/create-client.dto'
 import { GetClientStatsQueryDto } from './dto/get-client-stats-query.dto'
 import { GetClientTasksQueryDto } from './dto/get-client-tasks-query.dto'
@@ -101,6 +103,29 @@ export class ClientsController {
     @Param('id', ParseIntPipe) id: number,
   ): Promise<ClientResponseDto> {
     return this.clientsService.toggleStatus(id)
+  }
+
+  @Post(':id/purchased-hours')
+  addPurchasedHours(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ChangeClientPurchasedHoursDto,
+  ): Promise<ClientResponseDto> {
+    return this.clientsService.addPurchasedHours(id, dto)
+  }
+
+  @Delete(':id/purchased-hours')
+  removePurchasedHours(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ChangeClientPurchasedHoursDto,
+  ): Promise<ClientResponseDto> {
+    return this.clientsService.removePurchasedHours(id, dto)
+  }
+
+  @Get(':id/purchased-hours/events')
+  getPurchasedHoursEvents(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<ClientPurchasedHoursEventResponseDto[]> {
+    return this.clientsService.getPurchasedHoursEvents(id)
   }
 
   @Delete(':id')

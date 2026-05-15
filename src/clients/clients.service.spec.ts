@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common'
+import { BadRequestException, ForbiddenException } from '@nestjs/common'
 import { getRepositoryToken } from '@nestjs/typeorm'
 import { Test, TestingModule } from '@nestjs/testing'
 import {
@@ -8,7 +8,12 @@ import {
   TaskCodes,
 } from 'src/constants/const'
 import { BitrixService } from 'src/shared/integrations/bitrix/bitrix.service'
+import { DataSource } from 'typeorm'
 import { ClientsService } from './clients.service'
+import {
+  ClientPurchasedHoursEvent,
+  ClientPurchasedHoursEventType,
+} from './entities/client-purchased-hours-event.entity'
 import { Client, ClientStatus } from './entities/client.entity'
 
 describe('ClientsService', () => {
@@ -24,6 +29,24 @@ describe('ClientsService', () => {
     findOne: jest.fn(),
   }
 
+  const purchasedHoursEventsRepository = {
+    find: jest.fn(),
+  }
+
+  const transactionalClientsRepository = {
+    findOne: jest.fn(),
+    save: jest.fn(),
+  }
+
+  const transactionalPurchasedHoursEventsRepository = {
+    create: jest.fn(),
+    save: jest.fn(),
+  }
+
+  const dataSource = {
+    transaction: jest.fn(),
+  }
+
   const bitrixService = {
     getItem: jest.fn(),
     listAllItems: jest.fn(),
@@ -37,6 +60,14 @@ describe('ClientsService', () => {
         {
           provide: getRepositoryToken(Client),
           useValue: clientsRepository,
+        },
+        {
+          provide: getRepositoryToken(ClientPurchasedHoursEvent),
+          useValue: purchasedHoursEventsRepository,
+        },
+        {
+          provide: DataSource,
+          useValue: dataSource,
         },
         {
           provide: BitrixService,
@@ -147,6 +178,7 @@ describe('ClientsService', () => {
     )
 
     expect(result).toMatchObject({
+      purchasedHours: null,
       period: {
         start: '2026-05-01',
         end: '2026-05-14',
@@ -224,5 +256,119 @@ describe('ClientsService', () => {
         role: 'client',
       }),
     ).rejects.toBeInstanceOf(ForbiddenException)
+  })
+
+  it('adds purchased hours and writes timeline event', async () => {
+    const clientWithHours = {
+      ...client,
+      purchasedHours: null,
+    } as Client
+    const savedClient = {
+      ...clientWithHours,
+      purchasedHours: 10,
+    } as Client
+
+    transactionalClientsRepository.findOne.mockResolvedValue(clientWithHours)
+    transactionalClientsRepository.save.mockResolvedValue(savedClient)
+    transactionalPurchasedHoursEventsRepository.create.mockReturnValue({
+      clientId: 1,
+      type: ClientPurchasedHoursEventType.Added,
+      hours: 10,
+      balanceAfter: 10,
+      comment: 'Paid invoice',
+    })
+    dataSource.transaction.mockImplementation((callback) =>
+      callback({
+        getRepository: (entity: unknown) =>
+          entity === Client
+            ? transactionalClientsRepository
+            : transactionalPurchasedHoursEventsRepository,
+      }),
+    )
+
+    const result = await service.addPurchasedHours(1, {
+      hours: 10,
+      comment: ' Paid invoice ',
+    })
+
+    expect(result).toMatchObject({
+      purchasedHours: 10,
+      hasPurchasedHours: true,
+    })
+    expect(transactionalPurchasedHoursEventsRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: 1,
+        type: ClientPurchasedHoursEventType.Added,
+        hours: 10,
+        balanceAfter: 10,
+        comment: 'Paid invoice',
+      }),
+    )
+  })
+
+  it('removes purchased hours and keeps zero as an explicit balance', async () => {
+    const clientWithHours = {
+      ...client,
+      purchasedHours: 5,
+    } as Client
+    const savedClient = {
+      ...clientWithHours,
+      purchasedHours: 0,
+    } as Client
+
+    transactionalClientsRepository.findOne.mockResolvedValue(clientWithHours)
+    transactionalClientsRepository.save.mockResolvedValue(savedClient)
+    transactionalPurchasedHoursEventsRepository.create.mockReturnValue({
+      clientId: 1,
+      type: ClientPurchasedHoursEventType.Removed,
+      hours: 5,
+      balanceAfter: 0,
+      comment: null,
+    })
+    dataSource.transaction.mockImplementation((callback) =>
+      callback({
+        getRepository: (entity: unknown) =>
+          entity === Client
+            ? transactionalClientsRepository
+            : transactionalPurchasedHoursEventsRepository,
+      }),
+    )
+
+    const result = await service.removePurchasedHours(1, {
+      hours: 5,
+    })
+
+    expect(result).toMatchObject({
+      purchasedHours: 0,
+      hasPurchasedHours: true,
+    })
+    expect(transactionalPurchasedHoursEventsRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: ClientPurchasedHoursEventType.Removed,
+        hours: 5,
+        balanceAfter: 0,
+      }),
+    )
+  })
+
+  it('rejects removing more purchased hours than client has', async () => {
+    transactionalClientsRepository.findOne.mockResolvedValue({
+      ...client,
+      purchasedHours: 3,
+    })
+    dataSource.transaction.mockImplementation((callback) =>
+      callback({
+        getRepository: (entity: unknown) =>
+          entity === Client
+            ? transactionalClientsRepository
+            : transactionalPurchasedHoursEventsRepository,
+      }),
+    )
+
+    await expect(
+      service.removePurchasedHours(1, {
+        hours: 4,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException)
   })
 })

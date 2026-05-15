@@ -7,6 +7,8 @@ export class ClientResponseDto {
   crmClientId: number
   status: ClientStatus
   lastLogin: Date | null
+  purchasedHours: number | null
+  hasPurchasedHours: boolean
   createdAt: Date
   updatedAt: Date
 }

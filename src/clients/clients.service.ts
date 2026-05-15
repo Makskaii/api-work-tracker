@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   ConflictException,
   Injectable,
@@ -19,9 +20,12 @@ import { BitrixService } from 'src/shared/integrations/bitrix/bitrix.service'
 import { UserInfo } from 'src/types/bitrix'
 import { ReportProps } from 'src/types/reports'
 import { TaskProps } from 'src/types/tasks'
-import { FindOptionsWhere, Like, Repository } from 'typeorm'
+import { DataSource, FindOptionsWhere, Like, Repository } from 'typeorm'
 import { ClientJwtPayload } from '../auth/client-jwt.guard'
-import { toClientResponseDto } from './clients.mapper'
+import {
+  toClientPurchasedHoursEventResponseDto,
+  toClientResponseDto,
+} from './clients.mapper'
 import {
   ClientCompanyDto,
   ClientProjectDto,
@@ -30,11 +34,17 @@ import {
   ClientTeamRoleCode,
   toClientTeamUserDto,
 } from './dto/client-bitrix-response.dto'
+import { ClientPurchasedHoursEventResponseDto } from './dto/client-purchased-hours-event-response.dto'
 import { ClientResponseDto } from './dto/client-response.dto'
+import { ChangeClientPurchasedHoursDto } from './dto/change-client-purchased-hours.dto'
 import { CreateClientDto } from './dto/create-client.dto'
 import { GetClientStatsQueryDto } from './dto/get-client-stats-query.dto'
 import { GetClientTasksQueryDto } from './dto/get-client-tasks-query.dto'
 import { GetClientsQueryDto } from './dto/get-clients-query.dto'
+import {
+  ClientPurchasedHoursEvent,
+  ClientPurchasedHoursEventType,
+} from './entities/client-purchased-hours-event.entity'
 import { Client, ClientStatus } from './entities/client.entity'
 
 @Injectable()
@@ -42,6 +52,9 @@ export class ClientsService {
   constructor(
     @InjectRepository(Client)
     private readonly clientsRepository: Repository<Client>,
+    @InjectRepository(ClientPurchasedHoursEvent)
+    private readonly purchasedHoursEventsRepository: Repository<ClientPurchasedHoursEvent>,
+    private readonly dataSource: DataSource,
     private readonly bitrixService: BitrixService,
   ) {}
 
@@ -126,6 +139,53 @@ export class ClientsService {
     }
   }
 
+  addPurchasedHours(
+    id: number,
+    dto: ChangeClientPurchasedHoursDto,
+  ): Promise<ClientResponseDto> {
+    return this.changePurchasedHours(
+      id,
+      dto,
+      ClientPurchasedHoursEventType.Added,
+    )
+  }
+
+  removePurchasedHours(
+    id: number,
+    dto: ChangeClientPurchasedHoursDto,
+  ): Promise<ClientResponseDto> {
+    return this.changePurchasedHours(
+      id,
+      dto,
+      ClientPurchasedHoursEventType.Removed,
+    )
+  }
+
+  async getPurchasedHoursEvents(
+    id: number,
+  ): Promise<ClientPurchasedHoursEventResponseDto[]> {
+    const client = await this.clientsRepository.findOne({
+      where: { id },
+      select: {
+        id: true,
+      },
+    })
+
+    if (!client) {
+      throw new NotFoundException('Client not found')
+    }
+
+    const events = await this.purchasedHoursEventsRepository.find({
+      where: { clientId: id },
+      order: {
+        createdAt: 'DESC',
+        id: 'DESC',
+      },
+    })
+
+    return events.map(toClientPurchasedHoursEventResponseDto)
+  }
+
   async getMyCompany(
     authClient: ClientJwtPayload,
   ): Promise<ClientCompanyDto> {
@@ -188,6 +248,7 @@ export class ClientsService {
     const externalTotal = this.sumReportTime(externalReports)
 
     return {
+      purchasedHours: this.toNullableNumber(client.purchasedHours),
       period: {
         start,
         end,
@@ -265,6 +326,69 @@ export class ClientsService {
     const savedClient = await this.clientsRepository.save(client)
 
     return toClientResponseDto(savedClient)
+  }
+
+  private changePurchasedHours(
+    id: number,
+    dto: ChangeClientPurchasedHoursDto,
+    type: ClientPurchasedHoursEventType,
+  ): Promise<ClientResponseDto> {
+    return this.dataSource.transaction(async (manager) => {
+      const clientsRepository = manager.getRepository(Client)
+      const purchasedHoursEventsRepository = manager.getRepository(
+        ClientPurchasedHoursEvent,
+      )
+      const client = await clientsRepository.findOne({
+        where: { id },
+        lock: {
+          mode: 'pessimistic_write',
+        },
+      })
+
+      if (!client) {
+        throw new NotFoundException('Client not found')
+      }
+
+      const currentHours = this.toNumber(client.purchasedHours)
+      const changedHours = this.roundTime(dto.hours)
+
+      if (
+        type === ClientPurchasedHoursEventType.Removed &&
+        client.purchasedHours === null
+      ) {
+        throw new BadRequestException('Client has no purchased hours')
+      }
+
+      if (
+        type === ClientPurchasedHoursEventType.Removed &&
+        currentHours < changedHours
+      ) {
+        throw new BadRequestException('Not enough purchased hours')
+      }
+
+      const nextHours =
+        type === ClientPurchasedHoursEventType.Added
+          ? currentHours + changedHours
+          : currentHours - changedHours
+      const balanceAfter = this.roundTime(nextHours)
+
+      client.purchasedHours = balanceAfter
+
+      const savedClient = await clientsRepository.save(client)
+      const comment = dto.comment?.trim() || null
+
+      const event = purchasedHoursEventsRepository.create({
+        clientId: id,
+        type,
+        hours: changedHours,
+        balanceAfter,
+        comment,
+      })
+
+      await purchasedHoursEventsRepository.save(event)
+
+      return toClientResponseDto(savedClient)
+    })
   }
 
   private async getActiveAuthorizedClient(
@@ -442,6 +566,10 @@ export class ClientsService {
   }
 
   private toNullableNumber(value: unknown): number | null {
+    if (value === null || value === undefined || value === '') {
+      return null
+    }
+
     const parsed = Number(value)
 
     return Number.isFinite(parsed) ? parsed : null

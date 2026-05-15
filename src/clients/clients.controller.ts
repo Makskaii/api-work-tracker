@@ -29,6 +29,7 @@ import { CreateClientDto } from './dto/create-client.dto'
 import { GetClientStatsQueryDto } from './dto/get-client-stats-query.dto'
 import { GetClientTasksQueryDto } from './dto/get-client-tasks-query.dto'
 import { GetClientsQueryDto } from './dto/get-clients-query.dto'
+import { UpdateClientDto } from './dto/update-client.dto'
 
 @Controller('clients')
 export class ClientsController {
@@ -42,6 +43,14 @@ export class ClientsController {
   @Get()
   findAll(@Query() query: GetClientsQueryDto): Promise<ClientResponseDto[]> {
     return this.clientsService.findAll(query)
+  }
+
+  @Patch(':id')
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() updateClientDto: UpdateClientDto,
+  ): Promise<ClientResponseDto> {
+    return this.clientsService.update(id, updateClientDto)
   }
 
   @Get('me/company')

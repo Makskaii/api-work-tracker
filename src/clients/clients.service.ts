@@ -41,6 +41,7 @@ import { CreateClientDto } from './dto/create-client.dto'
 import { GetClientStatsQueryDto } from './dto/get-client-stats-query.dto'
 import { GetClientTasksQueryDto } from './dto/get-client-tasks-query.dto'
 import { GetClientsQueryDto } from './dto/get-clients-query.dto'
+import { UpdateClientDto } from './dto/update-client.dto'
 import {
   ClientPurchasedHoursEvent,
   ClientPurchasedHoursEventType,
@@ -102,6 +103,54 @@ export class ClientsService {
     })
 
     return clients.map(toClientResponseDto)
+  }
+
+  async update(
+    id: number,
+    updateClientDto: UpdateClientDto,
+  ): Promise<ClientResponseDto> {
+    const client = await this.clientsRepository.findOne({
+      where: { id },
+    })
+
+    if (!client) {
+      throw new NotFoundException('Client not found')
+    }
+
+    if (!this.hasClientUpdateFields(updateClientDto)) {
+      throw new BadRequestException('No client update fields provided')
+    }
+
+    if (updateClientDto.email !== undefined) {
+      await this.ensureEmailIsAvailable(updateClientDto.email, id)
+      client.email = updateClientDto.email
+    }
+
+    if (updateClientDto.crmId !== undefined) {
+      await this.ensureCrmClientIdIsAvailable(updateClientDto.crmId, id)
+      client.crmClientId = updateClientDto.crmId
+    }
+
+    if (updateClientDto.name !== undefined) {
+      client.name = updateClientDto.name
+    }
+
+    if (updateClientDto.status !== undefined) {
+      client.status = updateClientDto.status
+    }
+
+    if (Object.hasOwn(updateClientDto, 'purchasedHours')) {
+      const purchasedHours = updateClientDto.purchasedHours
+
+      client.purchasedHours =
+        purchasedHours === null || purchasedHours === undefined
+          ? null
+          : this.roundTime(purchasedHours)
+    }
+
+    const savedClient = await this.clientsRepository.save(client)
+
+    return toClientResponseDto(savedClient)
   }
 
   deactivate(id: number): Promise<ClientResponseDto> {
@@ -607,6 +656,44 @@ export class ClientsService {
       },
     ]
   }
+
+  private hasClientUpdateFields(updateClientDto: UpdateClientDto): boolean {
+    return CLIENT_UPDATE_FIELDS.some((field) =>
+      Object.hasOwn(updateClientDto, field),
+    )
+  }
+
+  private async ensureEmailIsAvailable(
+    email: string,
+    clientId: number,
+  ): Promise<void> {
+    const existingClient = await this.clientsRepository.findOne({
+      where: { email },
+      select: {
+        id: true,
+      },
+    })
+
+    if (existingClient && Number(existingClient.id) !== clientId) {
+      throw new ConflictException('Client with this email already exists')
+    }
+  }
+
+  private async ensureCrmClientIdIsAvailable(
+    crmClientId: number,
+    clientId: number,
+  ): Promise<void> {
+    const existingClient = await this.clientsRepository.findOne({
+      where: { crmClientId },
+      select: {
+        id: true,
+      },
+    })
+
+    if (existingClient && Number(existingClient.id) !== clientId) {
+      throw new ConflictException('Client with this crmClientId already exists')
+    }
+  }
 }
 
 type ClientTeamRawValue = number | string | number[] | string[] | null
@@ -635,6 +722,14 @@ type BitrixCompany = {
   title?: string
   [key: string]: unknown
 }
+
+const CLIENT_UPDATE_FIELDS = [
+  'name',
+  'email',
+  'crmId',
+  'status',
+  'purchasedHours',
+] satisfies readonly (keyof UpdateClientDto)[]
 
 const CLIENT_TEAM_ROLES: {
   roleCode: ClientTeamRoleCode

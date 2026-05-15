@@ -1,4 +1,8 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common'
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common'
 import { getRepositoryToken } from '@nestjs/typeorm'
 import { Test, TestingModule } from '@nestjs/testing'
 import {
@@ -27,6 +31,7 @@ describe('ClientsService', () => {
 
   const clientsRepository = {
     findOne: jest.fn(),
+    save: jest.fn(),
   }
 
   const purchasedHoursEventsRepository = {
@@ -256,6 +261,72 @@ describe('ClientsService', () => {
         role: 'client',
       }),
     ).rejects.toBeInstanceOf(ForbiddenException)
+  })
+
+  it('updates admin-managed client profile fields', async () => {
+    const currentClient = {
+      ...client,
+      name: 'Old name',
+      email: 'old@example.com',
+      crmClientId: 42,
+      purchasedHours: null,
+    } as Client
+    const savedClient = {
+      ...currentClient,
+      name: 'New name',
+      email: 'new@example.com',
+      crmClientId: 43,
+      status: ClientStatus.Inactive,
+      purchasedHours: 12.35,
+    } as Client
+
+    clientsRepository.findOne
+      .mockResolvedValueOnce(currentClient)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+    clientsRepository.save.mockResolvedValue(savedClient)
+
+    const result = await service.update(1, {
+      name: 'New name',
+      email: 'new@example.com',
+      crmId: 43,
+      status: ClientStatus.Inactive,
+      purchasedHours: 12.345,
+    })
+
+    expect(clientsRepository.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'New name',
+        email: 'new@example.com',
+        crmClientId: 43,
+        status: ClientStatus.Inactive,
+        purchasedHours: 12.35,
+      }),
+    )
+    expect(result).toMatchObject({
+      name: 'New name',
+      email: 'new@example.com',
+      crmClientId: 43,
+      status: ClientStatus.Inactive,
+      purchasedHours: 12.35,
+    })
+  })
+
+  it('rejects client update when email is already used by another client', async () => {
+    clientsRepository.findOne
+      .mockResolvedValueOnce({
+        ...client,
+        email: 'current@example.com',
+      } as Client)
+      .mockResolvedValueOnce({
+        id: 2,
+      } as Client)
+
+    await expect(
+      service.update(1, {
+        email: 'busy@example.com',
+      }),
+    ).rejects.toBeInstanceOf(ConflictException)
   })
 
   it('adds purchased hours and writes timeline event', async () => {

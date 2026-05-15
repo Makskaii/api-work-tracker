@@ -7,6 +7,7 @@ import { JwtService } from '@nestjs/jwt'
 import { InjectRepository } from '@nestjs/typeorm'
 import { compare } from 'bcryptjs'
 import { Repository } from 'typeorm'
+import { toClientResponseDto } from '../clients/clients.mapper'
 import { LoginClientDto } from '../clients/dto/login-client.dto'
 import { Client, ClientStatus } from '../clients/entities/client.entity'
 
@@ -43,6 +44,7 @@ export class AuthService {
     const lastLogin = new Date()
 
     await this.clientsRepository.update(client.id, { lastLogin })
+    client.lastLogin = lastLogin
 
     const payload = {
       sub: client.id,
@@ -55,14 +57,7 @@ export class AuthService {
 
     return {
       accessToken,
-      client: {
-        id: client.id,
-        name: client.name,
-        email: client.email,
-        crmClientId: client.crmClientId,
-        status: client.status,
-        lastLogin,
-      },
+      client: toClientResponseDto(client),
     }
   }
 }

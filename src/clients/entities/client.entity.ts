@@ -2,10 +2,12 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  OneToMany,
   PrimaryGeneratedColumn,
   Unique,
   UpdateDateColumn,
 } from 'typeorm'
+import { ClientPurchasedHoursEvent } from './client-purchased-hours-event.entity'
 
 export enum ClientStatus {
   Active = 'active',
@@ -39,6 +41,21 @@ export class Client {
 
   @Column({ name: 'last_login', type: 'datetime', nullable: true })
   lastLogin!: Date | null
+
+  @Column({
+    name: 'purchased_hours',
+    type: 'decimal',
+    precision: 8,
+    scale: 2,
+    nullable: true,
+  })
+  purchasedHours!: number | null
+
+  @OneToMany(
+    () => ClientPurchasedHoursEvent,
+    (purchasedHoursEvent) => purchasedHoursEvent.client,
+  )
+  purchasedHoursEvents!: ClientPurchasedHoursEvent[]
 
   @CreateDateColumn({
     name: 'created_at',

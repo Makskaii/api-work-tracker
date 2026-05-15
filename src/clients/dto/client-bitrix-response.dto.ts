@@ -41,6 +41,7 @@ export type ClientTeamDto = {
 }
 
 export type ClientStatsDto = {
+  purchasedHours: number | null
   period: {
     start: string
     end: string

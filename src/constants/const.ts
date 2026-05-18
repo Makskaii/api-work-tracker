@@ -35,6 +35,7 @@ export enum DailyReportCodes {
   project = 'ufCrm11_1772012010',
   activityType = 'ufCrm11_1774427281',
   parentId = 'parentId1072',
+  company = 'ufCrm11_1775128268',
 }
 
 export const Endpoints = {
@@ -97,9 +98,7 @@ export const CLIENT_TASK_IN_WORK_STAGE_IDS = [
   TaskStageIds.docs,
 ] as const
 
-export const CLIENT_TASK_APPROVAL_STAGE_IDS = [
-  TaskStageIds.approval,
-] as const
+export const CLIENT_TASK_APPROVAL_STAGE_IDS = [TaskStageIds.approval] as const
 export const CLIENT_TASK_NEW_PROPOSAL_STAGE_IDS = [
   TaskStageIds.newProposal,
 ] as const
@@ -157,6 +156,7 @@ export const TASK_SELECT_FIELDS = [
   'createdBy',
   'movedTime',
   TaskCodes.client,
+  TaskCodes.company,
   TaskCodes.project,
   TaskCodes.estimateTime,
   TaskCodes.description,
@@ -179,6 +179,7 @@ export const reportSelectFields = [
   DailyReportCodes.title,
   DailyReportCodes.timeSpent,
   DailyReportCodes.project,
+  DailyReportCodes.company,
   DailyReportCodes.taskId,
   DailyReportCodes.activityType,
   'assignedById',

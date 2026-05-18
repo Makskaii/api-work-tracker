@@ -4,10 +4,9 @@ import dayjs from 'dayjs'
 import fs from 'fs'
 import path from 'path'
 import {
-  ClientsCodes,
   DailyReportCodes,
-  Endpoints,
   EntityTypeIds,
+  ProjectCodes,
   reportSelectFields,
   TASK_SELECT_FIELDS,
   TaskCodes,
@@ -15,11 +14,7 @@ import {
 import { BitrixService } from 'src/shared/integrations/bitrix/bitrix.service'
 import { HtmlBuilderService } from 'src/shared/pdf/builder.service'
 import { PdfService } from 'src/shared/pdf/pdf.service'
-import {
-  BitrixClientProjects,
-  BitrixClients,
-  ClientProjects,
-} from 'src/types/bitrix'
+import { BitrixClientProjects, ClientProjects } from 'src/types/bitrix'
 import {
   GroupedTasksWithTimeSpent,
   ReportProps,
@@ -38,6 +33,20 @@ export type ProjectFromList = {
   id: string
   name: string
   projectId: string
+}
+
+type ReportCompany = {
+  ID: string
+  NAME: string
+  [key: string]: unknown
+}
+
+type BitrixCompanyItem = {
+  id?: string | number
+  title?: string
+  ID?: string | number
+  TITLE?: string
+  [key: string]: unknown
 }
 
 @Injectable()
@@ -309,46 +318,31 @@ export class DocRecordsService {
 
     return value ? String(value) : ''
   }
-  async fetchProjectsByClient(
-    clients: BitrixClients[],
+  private async fetchProjectsByCompany(
+    companyId: number,
     projectsFromList: ProjectFromList[],
   ) {
-    if (!clients) return []
-
     try {
-      const response = await Promise.all(
-        clients.map(async (client) => {
-          const projects = await this.bitrixService.listItems<ClientProjects>({
-            entityTypeId: EntityTypeIds.projects,
-            filter: {
-              [ClientsCodes.client]: client.ID,
-            },
-          })
+      const projects = await this.bitrixService.listAllItems<ClientProjects>({
+        entityTypeId: EntityTypeIds.projects,
+        filter: {
+          [ProjectCodes.company]: companyId,
+        },
+      })
 
-          const projectsWithRealId = (projects ?? []).map((project) => {
-            const projectTitle = String(project.title ?? '')
-              .trim()
-              .toLowerCase()
+      return (projects ?? []).map((project) => {
+        const projectTitle = String(project.title ?? '').trim().toLowerCase()
 
-            const matchedProject = projectsFromList.find(
-              (listProject) =>
-                listProject.name.trim().toLowerCase() === projectTitle,
-            )
+        const matchedProject = projectsFromList.find(
+          (listProject) =>
+            listProject.name.trim().toLowerCase() === projectTitle,
+        )
 
-            return {
-              ...project,
-              projectId: matchedProject?.id ?? '',
-            }
-          })
-
-          return {
-            ...client,
-            projects: projectsWithRealId,
-          }
-        }),
-      )
-
-      return response
+        return {
+          ...project,
+          projectId: matchedProject?.id ?? '',
+        }
+      })
     } catch (error) {
       console.log(error)
       return []
@@ -367,33 +361,56 @@ export class DocRecordsService {
       .filter((item) => item.projectId)
   }
 
+  private async getReportCompany(companyId: string): Promise<ReportCompany> {
+    const id = Number(companyId)
+
+    if (!Number.isFinite(id) || id <= 0) {
+      throw new NotFoundException(`Company with id ${companyId} not found`)
+    }
+
+    const company = await this.bitrixService.getItem<BitrixCompanyItem>({
+      entityTypeId: EntityTypeIds.companies,
+      id,
+    })
+
+    if (!company) {
+      throw new NotFoundException(`Company with id ${companyId} not found`)
+    }
+
+    const normalizedId = company.ID ?? company.id ?? companyId
+    const normalizedName =
+      company.TITLE ?? company.title ?? `Company ${String(normalizedId)}`
+
+    return {
+      ...company,
+      ID: String(normalizedId),
+      NAME: String(normalizedName),
+    }
+  }
+
   async prepareClientReport(clientId: string, start: string, end: string) {
     this.clearExpiredReports()
 
     const periodStart = dayjs(start).subtract(7, 'day').format('YYYY-MM-DD')
     const periodEnd = end
 
-    const clients = await this.bitrixService.getClients()
+    const company = await this.getReportCompany(clientId)
+    const companyId = Number(company.ID)
     const projectList = await this.bitrixService.getClientsProjects()
 
     const normalizedProjects = this.mapProjectsFromList(projectList)
 
-    const data = await this.fetchProjectsByClient(clients, normalizedProjects)
-
-    const client = data.find((c) => String(c.ID) === String(clientId))
-
-    if (!client) {
-      throw new NotFoundException(
-        `Client with id ${clientId} not found or has no projects`,
-      )
-    }
+    const projects = await this.fetchProjectsByCompany(
+      companyId,
+      normalizedProjects,
+    )
 
     const result: {
       project: ClientProjects
       tasks: TaskWithResult[]
     }[] = []
 
-    for (const project of client.projects) {
+    for (const project of projects) {
       const tasks = await this.bitrixService.listAllItems<TaskProps>({
         entityTypeId: EntityTypeIds.tasks,
         select: TASK_SELECT_FIELDS,
@@ -401,6 +418,7 @@ export class DocRecordsService {
           [`>=lastActivityTime`]: periodStart,
           [`<=lastActivityTime`]: periodEnd,
           stageId: 'DT1072_18:UC_6JNSDG',
+          [TaskCodes.company]: companyId,
           [TaskCodes.project]: project.projectId,
         },
       })
@@ -429,11 +447,6 @@ export class DocRecordsService {
         }
       })
 
-      console.log({
-        project,
-        tasks: tasksWithResult,
-      })
-
       result.push({
         project,
         tasks: tasksWithResult,
@@ -453,7 +466,6 @@ export class DocRecordsService {
     }
 
     const getReportDate = (report: ReportProps): string | null => {
-      console.log({ report })
       const value = report.begindate
 
       if (!value) return null
@@ -532,10 +544,6 @@ export class DocRecordsService {
       return []
     }
 
-    if (!client) {
-      throw new NotFoundException('Client not found')
-    }
-
     const firstWeekStart = periodStart
     const firstWeekEnd = dayjs(periodStart).add(4, 'day').format('YYYY-MM-DD')
 
@@ -566,7 +574,7 @@ export class DocRecordsService {
         select: reportSelectFields,
         filter: {
           [DailyReportCodes.activityType]: '402',
-          [DailyReportCodes.project]: client.ID,
+          [DailyReportCodes.company]: companyId,
           '>=begindate': periodStart,
           '<=begindate': end,
         },
@@ -577,7 +585,7 @@ export class DocRecordsService {
         select: reportSelectFields,
         filter: {
           [DailyReportCodes.activityType]: '417',
-          [DailyReportCodes.project]: client.ID,
+          [DailyReportCodes.company]: companyId,
           '>=begindate': periodStart,
           '<=begindate': end,
         },
@@ -621,7 +629,7 @@ export class DocRecordsService {
       firstWeekEstimate + secondWeekEstimate + firstWeekTime + secondWeekTime
 
     const html = this.htmlService.buildClientReportHtml({
-      client,
+      client: company,
       projects: result,
       periodText: `${dayjs(periodStart).format('DD.MM.YYYY')} - ${dayjs(periodEnd).format('DD.MM.YYYY')}`,
       watermarkUrl: this.getImageBase64('public/docsLogo/watermark.jpg'),

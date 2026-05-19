@@ -461,6 +461,9 @@ export class DocRecordsService {
       const taskResult = taskReports.reduce((sum, report) => {
         return sum + ` ${report[DailyReportCodes.title]}`
       }, '')
+      const timeSpent = taskReports.reduce((sum, report) => {
+        return sum + this.parseSpentTime(report[DailyReportCodes.timeSpent])
+      }, 0)
 
       const projectId = task[TaskCodes.parentproject]
 
@@ -474,6 +477,7 @@ export class DocRecordsService {
       projectTasks.push({
         ...task,
         result: taskResult,
+        timeSpent,
         reports: taskReports,
       })
 
@@ -485,18 +489,6 @@ export class DocRecordsService {
         project,
         tasks: tasksByProjectId.get(String(project.id)) ?? [],
       })
-    }
-
-    const parseEstimate = (value: unknown): number => {
-      if (typeof value === 'number') return value
-
-      if (typeof value === 'string') {
-        const normalized = value.replace(',', '.').trim()
-        const parsed = Number(normalized)
-        return Number.isFinite(parsed) ? parsed : 0
-      }
-
-      return 0
     }
 
     const getReportDate = (report: ReportProps): string | null => {
@@ -520,7 +512,7 @@ export class DocRecordsService {
           return sum
         }
 
-        return sum + parseEstimate(report[DailyReportCodes.timeSpent])
+        return sum + this.parseSpentTime(report[DailyReportCodes.timeSpent])
       }, 0)
     }
 
@@ -564,39 +556,19 @@ export class DocRecordsService {
       )
     }
 
-    const getSprintDates = (task: TaskProps): string[] => {
-      const value = task[TaskCodes.sprintDateStart]
-
-      if (Array.isArray(value)) {
-        return value.map((d) => dayjs(d).format('YYYY-MM-DD'))
-      }
-
-      if (typeof value === 'string') {
-        return [dayjs(value).format('YYYY-MM-DD')]
-      }
-
-      return []
-    }
-
     const firstWeekStart = periodStart
     const firstWeekEnd = dayjs(periodStart).add(4, 'day').format('YYYY-MM-DD')
 
     const secondWeekStart = start
     const secondWeekEnd = end
 
-    const calculateEstimate = (
-      items: TaskProps[],
+    const calculateTaskReportTime = (
+      items: TaskWithResult[],
       start: string,
       end: string,
     ) => {
       return items.reduce((sum, task) => {
-        const dates = getSprintDates(task)
-
-        const inPeriod = dates.some((date) => isInRange(date, start, end))
-
-        if (!inPeriod) return sum
-
-        return sum + parseEstimate(task[TaskCodes.estimateTime])
+        return sum + calculateReportTime(task.reports, start, end)
       }, 0)
     }
 
@@ -639,13 +611,13 @@ export class DocRecordsService {
       secondWeekEnd,
     )
 
-    const firstWeekEstimate = calculateEstimate(
+    const firstWeekTaskTime = calculateTaskReportTime(
       allTasks,
       firstWeekStart,
       firstWeekEnd,
     )
 
-    const secondWeekEstimate = calculateEstimate(
+    const secondWeekTaskTime = calculateTaskReportTime(
       allTasks,
       secondWeekStart,
       secondWeekEnd,
@@ -660,7 +632,7 @@ export class DocRecordsService {
     )
 
     const totalEstimate =
-      firstWeekEstimate + secondWeekEstimate + firstWeekTime + secondWeekTime
+      firstWeekTaskTime + secondWeekTaskTime + firstWeekTime + secondWeekTime
 
     const html = this.htmlService.buildClientReportHtml({
       client: company,
@@ -674,11 +646,11 @@ export class DocRecordsService {
         },
         {
           label: `Неделя 1 (${dayjs(firstWeekStart).format('DD.MM')} - ${dayjs(firstWeekEnd).format('DD.MM')})`,
-          value: `${firstWeekEstimate} ч.`,
+          value: `${firstWeekTaskTime} ч.`,
         },
         {
           label: `Неделя 2 (${dayjs(secondWeekStart).format('DD.MM')} - ${dayjs(secondWeekEnd).format('DD.MM')})`,
-          value: `${secondWeekEstimate} ч.`,
+          value: `${secondWeekTaskTime} ч.`,
         },
       ],
       commsData: {

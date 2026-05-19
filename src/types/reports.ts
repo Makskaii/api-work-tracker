@@ -32,6 +32,7 @@ export type TaskWithTimeSpent = TaskProps & {
 
 export type TaskWithResult = TaskProps & {
   result: string
+  timeSpent: number
   reports: ReportProps[]
 }
 

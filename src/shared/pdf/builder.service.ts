@@ -486,9 +486,8 @@ export class HtmlBuilderService {
     const projectsHtml = projects
       .toSorted((a, b) => b.tasks.length - a.tasks.length)
       .map(({ project, tasks }) => {
-        const projectEstimateTime = tasks.reduce((sum, task) => {
-          const value = Number(task[TaskCodes.estimateTime])
-          return sum + (Number.isFinite(value) ? value : 0)
+        const projectTimeSpent = tasks.reduce((sum, task) => {
+          return sum + task.timeSpent
         }, 0)
 
         const tasksHtml = tasks
@@ -502,17 +501,14 @@ export class HtmlBuilderService {
               '<br />',
             )
 
-            const estimateTime =
-              Number(task[TaskCodes.estimateTime]) > 0
-                ? `${task[TaskCodes.estimateTime]} ч.`
-                : ''
+            const timeSpent = task.timeSpent > 0 ? `${task.timeSpent} ч.` : ''
 
             return `
             <div class="task-entry">
               <div class="task-line">
                 <span>${index + 1}.</span>
                 <span>${this.escapeHtml(task.title ?? '')}</span>
-                <span>${estimateTime}</span>
+                <span>${timeSpent}</span>
               </div>
 
               ${
@@ -544,7 +540,7 @@ export class HtmlBuilderService {
         <div class="project-block">
           <h2 class="project-title">
             ${this.escapeHtml(project.title ?? 'Без названия')}
-            (${projectEstimateTime} ч.)
+            (${projectTimeSpent} ч.)
           </h2>
 
           ${tasksHtml || '<div class="empty">Нет задач</div>'}

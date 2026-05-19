@@ -91,6 +91,14 @@ export class DocRecordsService {
     return 0
   }
 
+  private formatBitrixDayStart(date: string) {
+    return dayjs(date).startOf('day').format('YYYY-MM-DDTHH:mm:ssZ')
+  }
+
+  private formatBitrixDayEnd(date: string) {
+    return dayjs(date).endOf('day').format('YYYY-MM-DDTHH:mm:ssZ')
+  }
+
   private normalizeSprintDates(value: unknown): string[] {
     if (Array.isArray(value)) {
       return value
@@ -150,6 +158,9 @@ export class DocRecordsService {
     start: string,
     end: string,
   ) {
+    const filterStart = this.formatBitrixDayStart(start)
+    const filterEnd = this.formatBitrixDayEnd(end)
+
     const reportsResponses = await Promise.all(
       taskIds.map((taskId) =>
         this.bitrixService.listAllItems<ReportProps>({
@@ -157,8 +168,8 @@ export class DocRecordsService {
           select: reportSelectFields,
           filter: {
             [DailyReportCodes.parentId]: taskId,
-            '>=begindate': start,
-            '<=begindate': end,
+            '>=begindate': filterStart,
+            '<=begindate': filterEnd,
             stageId: 'DT1060_15:PREPARATION',
           },
         }),
@@ -428,6 +439,8 @@ export class DocRecordsService {
 
     const periodStart = dayjs(start).subtract(7, 'day').format('YYYY-MM-DD')
     const periodEnd = end
+    const periodFilterStart = this.formatBitrixDayStart(periodStart)
+    const periodFilterEnd = this.formatBitrixDayEnd(periodEnd)
 
     const company = await this.getReportCompany(clientId)
     const companyId = Number(company.ID)
@@ -443,8 +456,8 @@ export class DocRecordsService {
       select: reportSelectFields,
       filter: {
         [DailyReportCodes.company]: companyId,
-        '>=begindate': periodStart,
-        '<=begindate': periodEnd,
+        '>=begindate': periodFilterStart,
+        '<=begindate': periodFilterEnd,
         stageId: 'DT1060_15:PREPARATION',
       },
     })
@@ -581,8 +594,8 @@ export class DocRecordsService {
         filter: {
           [DailyReportCodes.activityType]: '402',
           [DailyReportCodes.company]: companyId,
-          '>=begindate': periodStart,
-          '<=begindate': end,
+          '>=begindate': periodFilterStart,
+          '<=begindate': periodFilterEnd,
         },
       })
     const ExternalCommsReports =
@@ -592,8 +605,8 @@ export class DocRecordsService {
         filter: {
           [DailyReportCodes.activityType]: '417',
           [DailyReportCodes.company]: companyId,
-          '>=begindate': periodStart,
-          '<=begindate': end,
+          '>=begindate': periodFilterStart,
+          '<=begindate': periodFilterEnd,
         },
       })
 

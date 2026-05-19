@@ -43,6 +43,10 @@ type BitrixCompanyItem = {
   [key: string]: unknown
 }
 
+type TaskWithParentProject = TaskProps & {
+  [TaskCodes.parentproject]?: string | number | null
+}
+
 @Injectable()
 export class DocRecordsService {
   private readonly reports = new Map<string, PreparedReport>()
@@ -168,6 +172,76 @@ export class DocRecordsService {
       },
       {},
     )
+  }
+
+  private getReportParentTaskId(report: ReportProps): string | null {
+    const taskId: unknown = report[DailyReportCodes.parentId]
+
+    if (taskId === null || taskId === undefined || taskId === '') {
+      return null
+    }
+
+    return String(taskId)
+  }
+
+  private groupReportsByParentTaskId(reports: ReportProps[]) {
+    return reports.reduce<Record<string, ReportProps[]>>((acc, report) => {
+      const taskId = this.getReportParentTaskId(report)
+
+      if (!taskId) {
+        return acc
+      }
+
+      if (!acc[taskId]) {
+        acc[taskId] = []
+      }
+
+      acc[taskId].push(report)
+
+      return acc
+    }, {})
+  }
+
+  private getUniqueReportTaskIds(reports: ReportProps[]) {
+    return Array.from(
+      new Set(
+        reports
+          .map((report) => this.getReportParentTaskId(report))
+          .filter((taskId): taskId is string => Boolean(taskId)),
+      ),
+    )
+  }
+
+  private chunkItems<T>(items: T[], size: number) {
+    const chunks: T[][] = []
+
+    for (let index = 0; index < items.length; index += size) {
+      chunks.push(items.slice(index, index + size))
+    }
+
+    return chunks
+  }
+
+  private async getDoneTasksByIds(taskIds: string[]) {
+    if (!taskIds.length) {
+      return []
+    }
+
+    const taskChunks = this.chunkItems(taskIds, 50)
+    const taskResponses = await Promise.all(
+      taskChunks.map((ids) =>
+        this.bitrixService.listAllItems<TaskWithParentProject>({
+          entityTypeId: EntityTypeIds.tasks,
+          select: TASK_SELECT_FIELDS,
+          filter: {
+            '@id': ids,
+            stageId: 'DT1072_18:UC_6JNSDG',
+          },
+        }),
+      ),
+    )
+
+    return taskResponses.flat()
   }
 
   async prepareReport(projId: string, start: string, end: string) {
@@ -364,45 +438,52 @@ export class DocRecordsService {
       tasks: TaskWithResult[]
     }[] = []
 
+    const reports = await this.bitrixService.listAllItems<ReportProps>({
+      entityTypeId: EntityTypeIds.reports,
+      select: reportSelectFields,
+      filter: {
+        [DailyReportCodes.company]: companyId,
+        '>=begindate': periodStart,
+        '<=begindate': periodEnd,
+        stageId: 'DT1060_15:PREPARATION',
+      },
+    })
+
+    const reportsMap = this.groupReportsByParentTaskId(reports)
+    const reportTaskIds = this.getUniqueReportTaskIds(reports)
+    const tasks = await this.getDoneTasksByIds(reportTaskIds)
+    const tasksByProjectId = new Map<string, TaskWithResult[]>()
+
+    for (const task of tasks) {
+      const taskId = String(task.id)
+      const taskReports = reportsMap[taskId] ?? []
+
+      const taskResult = taskReports.reduce((sum, report) => {
+        return sum + ` ${report[DailyReportCodes.title]}`
+      }, '')
+
+      const projectId = task[TaskCodes.parentproject]
+
+      if (projectId === null || projectId === undefined || projectId === '') {
+        continue
+      }
+
+      const projectKey = String(projectId)
+      const projectTasks = tasksByProjectId.get(projectKey) ?? []
+
+      projectTasks.push({
+        ...task,
+        result: taskResult,
+        reports: taskReports,
+      })
+
+      tasksByProjectId.set(projectKey, projectTasks)
+    }
+
     for (const project of projects) {
-      const tasks = await this.bitrixService.listAllItems<TaskProps>({
-        entityTypeId: EntityTypeIds.tasks,
-        select: TASK_SELECT_FIELDS,
-        filter: {
-          [`>=lastActivityTime`]: periodStart,
-          [`<=lastActivityTime`]: periodEnd,
-          stageId: 'DT1072_18:UC_6JNSDG',
-          [TaskCodes.parentproject]: project.id,
-        },
-      })
-
-      const normalizedTasks = Array.isArray(tasks) ? tasks : []
-      const taskIds = normalizedTasks.map((task) => String(task.id))
-
-      const reportsMap = await this.getReportsMapByTaskIds(
-        taskIds,
-        periodStart,
-        periodEnd,
-      )
-
-      const tasksWithResult: TaskWithResult[] = normalizedTasks.map((task) => {
-        const taskId = String(task.id)
-        const reports = reportsMap[taskId] ?? []
-
-        const result = reports.reduce((sum, report) => {
-          return sum + ` ${report[DailyReportCodes.title]}`
-        }, '')
-
-        return {
-          ...task,
-          result,
-          reports,
-        }
-      })
-
       result.push({
         project,
-        tasks: tasksWithResult,
+        tasks: tasksByProjectId.get(String(project.id)) ?? [],
       })
     }
 

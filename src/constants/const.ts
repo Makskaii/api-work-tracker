@@ -23,7 +23,7 @@ export enum ProjectCodes {
   analytic = 'ufCrm20_1777028495',
   devs = 'ufCrm20_1777028537',
   qa = 'ufCrm20_1777028582',
-  company = 'ufCrm20_177487974',
+  company = 'ufCrm20_1774879746',
   parentProject = 'ufCrm20_1774856819',
 }
 

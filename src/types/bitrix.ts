@@ -46,7 +46,7 @@ export interface ClientProjects {
   lastActivityTime: string
   [ClientsCodes.title]: string
   [ClientsCodes.client]: number
-  projectId: string
+  projectId?: string
 }
 
 export interface BitrixClientProjects {

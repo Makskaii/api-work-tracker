@@ -4,13 +4,18 @@ import { NestFactory } from '@nestjs/core'
 import { AppModule } from './app.module'
 import { AllExceptionsFilter } from './shared/filters/all-exceptions.filter'
 import { HttpLoggingInterceptor } from './shared/interceptors/http-logging.interceptor'
+import {
+  getNestLoggerLevels,
+  isProductionEnvironment,
+} from './shared/logging/logging.config'
 
 const { FRONTEND_URL } = process.env
 
 async function bootstrap() {
+  const isProduction = isProductionEnvironment(process.env.NODE_ENV, process.env.DEV)
   const app = await NestFactory.create(AppModule, {
     cors: true,
-    logger: ['log', 'error', 'warn', 'debug', 'verbose'],
+    logger: getNestLoggerLevels(process.env.NODE_ENV, process.env.DEV),
   })
 
   app.enableCors({
@@ -27,13 +32,11 @@ async function bootstrap() {
     }),
   )
 
-  app.useGlobalInterceptors(new HttpLoggingInterceptor())
+  app.useGlobalInterceptors(new HttpLoggingInterceptor({ isProduction }))
   app.useGlobalFilters(new AllExceptionsFilter())
 
   const logger = new Logger('Bootstrap')
-  logger.log(`Application started on port ${port}`)
-
   await app.listen(port)
-  console.log(`Server running on port ${port}`)
+  logger.log(`Application started on port ${port}`)
 }
 bootstrap()

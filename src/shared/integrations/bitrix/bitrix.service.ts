@@ -240,36 +240,42 @@ export class BitrixService {
     select?: readonly string[]
     filter?: AnyObject
   }): Promise<T[]> {
-    let start = 0
-    let hasNextPage = true
-    const items: T[] = []
+    try {
+      let start = 0
+      let hasNextPage = true
+      const items: T[] = []
 
-    while (hasNextPage) {
-      const response = await firstValueFrom(
-        this.httpService.get(Endpoints.crmItems, {
-          params: {
-            ...params,
-            start,
-          },
-        }),
+      while (hasNextPage) {
+        const response = await firstValueFrom(
+          this.httpService.get(Endpoints.crmItems, {
+            params: {
+              ...params,
+              start,
+            },
+          }),
+        )
+
+        const pageItems = response.data?.result?.items
+
+        if (Array.isArray(pageItems)) {
+          items.push(...pageItems)
+        }
+
+        const next = Number(response.data?.next)
+
+        if (Number.isFinite(next) && next > 0) {
+          start = next
+        } else {
+          hasNextPage = false
+        }
+      }
+
+      return items
+    } catch (error) {
+      throw new BadGatewayException(
+        `Bitrix listAllItems failed for entityTypeId=${params.entityTypeId}, filter=${JSON.stringify(params.filter ?? {})}: ${this.getBitrixErrorMessage(error)}`,
       )
-
-      const pageItems = response.data?.result?.items
-
-      if (Array.isArray(pageItems)) {
-        items.push(...pageItems)
-      }
-
-      const next = Number(response.data?.next)
-
-      if (Number.isFinite(next) && next > 0) {
-        start = next
-      } else {
-        hasNextPage = false
-      }
     }
-
-    return items
   }
 
   async getClients(): Promise<BitrixClients[]> {
@@ -477,10 +483,15 @@ export class BitrixService {
           ).response?.data
         : null
 
+    const responseDetails = responseData
+      ? JSON.stringify(responseData)
+      : undefined
+
     return (
       responseData?.error_description ??
       responseData?.message ??
       responseData?.error ??
+      responseDetails ??
       (error instanceof Error ? error.message : 'Bitrix request failed')
     )
   }

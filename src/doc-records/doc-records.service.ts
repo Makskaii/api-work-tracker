@@ -14,7 +14,7 @@ import {
 import { BitrixService } from 'src/shared/integrations/bitrix/bitrix.service'
 import { HtmlBuilderService } from 'src/shared/pdf/builder.service'
 import { PdfService } from 'src/shared/pdf/pdf.service'
-import { BitrixClientProjects, ClientProjects } from 'src/types/bitrix'
+import { ClientProjects } from 'src/types/bitrix'
 import {
   GroupedTasksWithTimeSpent,
   ReportProps,
@@ -27,12 +27,6 @@ type PreparedReport = {
   buffer: Buffer
   filename: string
   createdAt: number
-}
-
-export type ProjectFromList = {
-  id: string
-  name: string
-  projectId: string
 }
 
 type ReportCompany = {
@@ -161,6 +155,7 @@ export class DocRecordsService {
             [DailyReportCodes.parentId]: taskId,
             '>=begindate': start,
             '<=begindate': end,
+            stageId: 'DT1060_15:PREPARATION',
           },
         }),
       ),
@@ -309,56 +304,14 @@ export class DocRecordsService {
     }
   }
 
-  private getSinglePropertyValue = (
-    property?: Record<string, string> | null,
-  ): string => {
-    if (!property) return ''
-
-    const value = Object.values(property)[0]
-
-    return value ? String(value) : ''
-  }
-  private async fetchProjectsByCompany(
-    companyId: number,
-    projectsFromList: ProjectFromList[],
-  ) {
-    try {
-      const projects = await this.bitrixService.listAllItems<ClientProjects>({
-        entityTypeId: EntityTypeIds.projects,
-        filter: {
-          [ProjectCodes.company]: companyId,
-        },
-      })
-
-      return (projects ?? []).map((project) => {
-        const projectTitle = String(project.title ?? '').trim().toLowerCase()
-
-        const matchedProject = projectsFromList.find(
-          (listProject) =>
-            listProject.name.trim().toLowerCase() === projectTitle,
-        )
-
-        return {
-          ...project,
-          projectId: matchedProject?.id ?? '',
-        }
-      })
-    } catch (error) {
-      console.log(error)
-      return []
-    }
-  }
-
-  private mapProjectsFromList = (
-    items: BitrixClientProjects[],
-  ): ProjectFromList[] => {
-    return items
-      .map((element) => ({
-        id: String(element.ID),
-        name: String(element.NAME ?? ''),
-        projectId: this.getSinglePropertyValue(element.PROPERTY_87),
-      }))
-      .filter((item) => item.projectId)
+  private fetchProjectsByCompany(companyId: number): Promise<ClientProjects[]> {
+    return this.bitrixService.listAllItems<ClientProjects>({
+      entityTypeId: EntityTypeIds.projects,
+      select: ['id', 'title'],
+      filter: {
+        [ProjectCodes.company]: companyId,
+      },
+    })
   }
 
   private async getReportCompany(companyId: string): Promise<ReportCompany> {
@@ -368,10 +321,7 @@ export class DocRecordsService {
       throw new NotFoundException(`Company with id ${companyId} not found`)
     }
 
-    const company = await this.bitrixService.getItem<BitrixCompanyItem>({
-      entityTypeId: EntityTypeIds.companies,
-      id,
-    })
+    const company = await this.getCompanyById(id)
 
     if (!company) {
       throw new NotFoundException(`Company with id ${companyId} not found`)
@@ -388,6 +338,17 @@ export class DocRecordsService {
     }
   }
 
+  private async getCompanyById(id: number): Promise<BitrixCompanyItem | null> {
+    try {
+      return await this.bitrixService.getItem<BitrixCompanyItem>({
+        entityTypeId: EntityTypeIds.companies,
+        id,
+      })
+    } catch {
+      return this.bitrixService.getCompany<BitrixCompanyItem>(id)
+    }
+  }
+
   async prepareClientReport(clientId: string, start: string, end: string) {
     this.clearExpiredReports()
 
@@ -396,14 +357,7 @@ export class DocRecordsService {
 
     const company = await this.getReportCompany(clientId)
     const companyId = Number(company.ID)
-    const projectList = await this.bitrixService.getClientsProjects()
-
-    const normalizedProjects = this.mapProjectsFromList(projectList)
-
-    const projects = await this.fetchProjectsByCompany(
-      companyId,
-      normalizedProjects,
-    )
+    const projects = await this.fetchProjectsByCompany(companyId)
 
     const result: {
       project: ClientProjects
@@ -418,8 +372,7 @@ export class DocRecordsService {
           [`>=lastActivityTime`]: periodStart,
           [`<=lastActivityTime`]: periodEnd,
           stageId: 'DT1072_18:UC_6JNSDG',
-          [TaskCodes.company]: companyId,
-          [TaskCodes.project]: project.projectId,
+          [TaskCodes.parentproject]: project.id,
         },
       })
 

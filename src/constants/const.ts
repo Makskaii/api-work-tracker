@@ -32,10 +32,11 @@ export enum DailyReportCodes {
   timeSpent = 'ufCrm11_1770627880479',
   taskId = 'ufCrm11_1770627808462',
   client = 'ufCrm11_1772012010',
-  project = 'ufCrm11_1772012010',
+  project = 'ufCrm11_1774018669',
   activityType = 'ufCrm11_1774427281',
   parentId = 'parentId1072',
   company = 'ufCrm11_1775128268',
+  parentproject = 'ufCrm11_1775128299',
 }
 
 export const Endpoints = {
@@ -180,6 +181,7 @@ export const reportSelectFields = [
   DailyReportCodes.timeSpent,
   DailyReportCodes.project,
   DailyReportCodes.company,
+  DailyReportCodes.parentproject,
   DailyReportCodes.taskId,
   DailyReportCodes.activityType,
   'assignedById',

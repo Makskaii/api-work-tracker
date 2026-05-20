@@ -16,6 +16,8 @@ export interface ReportProps {
   createdTime: string
   begindate: string
   [DailyReportCodes.project]: number
+  [DailyReportCodes.company]?: number
+  [DailyReportCodes.parentproject]?: number
   [DailyReportCodes.taskId]: string
   [DailyReportCodes.timeSpent]: string
   [DailyReportCodes.title]: string
@@ -33,6 +35,8 @@ export type TaskWithTimeSpent = TaskProps & {
 export type TaskWithResult = TaskProps & {
   result: string
   timeSpent: number
+  firstWeekTime?: number
+  secondWeekTime?: number
   reports: ReportProps[]
 }
 

@@ -91,6 +91,10 @@ export class DocRecordsService {
     return 0
   }
 
+  private roundTime(value: number): number {
+    return Number(value.toFixed(2))
+  }
+
   private formatBitrixDayStart(date: string) {
     return dayjs(date).startOf('day').format('YYYY-MM-DDTHH:mm:ssZ')
   }
@@ -195,6 +199,17 @@ export class DocRecordsService {
     return String(taskId)
   }
 
+  private getReportProjectId(report: ReportProps): string | null {
+    const projectId: unknown =
+      report[DailyReportCodes.parentproject] ?? report[DailyReportCodes.project]
+
+    if (projectId === null || projectId === undefined || projectId === '') {
+      return null
+    }
+
+    return String(projectId)
+  }
+
   private groupReportsByParentTaskId(reports: ReportProps[]) {
     return reports.reduce<Record<string, ReportProps[]>>((acc, report) => {
       const taskId = this.getReportParentTaskId(report)
@@ -233,7 +248,7 @@ export class DocRecordsService {
     return chunks
   }
 
-  private async getDoneTasksByIds(taskIds: string[]) {
+  private async getTasksByIds(taskIds: string[]) {
     if (!taskIds.length) {
       return []
     }
@@ -246,7 +261,6 @@ export class DocRecordsService {
           select: TASK_SELECT_FIELDS,
           filter: {
             '@id': ids,
-            stageId: 'DT1072_18:UC_6JNSDG',
           },
         }),
       ),
@@ -434,6 +448,29 @@ export class DocRecordsService {
     }
   }
 
+  private getConfirmedClientReports(
+    companyId: number,
+    periodFilterStart: string,
+    periodFilterEnd: string,
+    extraFilter: Record<string, unknown> = {},
+  ): Promise<ReportProps[]> {
+    const baseFilter = {
+      ...extraFilter,
+      '>=begindate': periodFilterStart,
+      '<=begindate': periodFilterEnd,
+      stageId: 'DT1060_15:PREPARATION',
+    }
+
+    return this.bitrixService.listAllItems<ReportProps>({
+      entityTypeId: EntityTypeIds.reports,
+      select: reportSelectFields,
+      filter: {
+        ...baseFilter,
+        [DailyReportCodes.company]: companyId,
+      },
+    })
+  }
+
   async prepareClientReport(clientId: string, start: string, end: string) {
     this.clearExpiredReports()
 
@@ -451,20 +488,15 @@ export class DocRecordsService {
       tasks: TaskWithResult[]
     }[] = []
 
-    const reports = await this.bitrixService.listAllItems<ReportProps>({
-      entityTypeId: EntityTypeIds.reports,
-      select: reportSelectFields,
-      filter: {
-        [DailyReportCodes.company]: companyId,
-        '>=begindate': periodFilterStart,
-        '<=begindate': periodFilterEnd,
-        stageId: 'DT1060_15:PREPARATION',
-      },
-    })
+    const reports = await this.getConfirmedClientReports(
+      companyId,
+      periodFilterStart,
+      periodFilterEnd,
+    )
 
     const reportsMap = this.groupReportsByParentTaskId(reports)
     const reportTaskIds = this.getUniqueReportTaskIds(reports)
-    const tasks = await this.getDoneTasksByIds(reportTaskIds)
+    const tasks = await this.getTasksByIds(reportTaskIds)
     const tasksByProjectId = new Map<string, TaskWithResult[]>()
 
     for (const task of tasks) {
@@ -478,7 +510,9 @@ export class DocRecordsService {
         return sum + this.parseSpentTime(report[DailyReportCodes.timeSpent])
       }, 0)
 
-      const projectId = task[TaskCodes.parentproject]
+      const projectId =
+        taskReports.map((report) => this.getReportProjectId(report)).find(Boolean) ??
+        task[TaskCodes.parentproject]
 
       if (projectId === null || projectId === undefined || projectId === '') {
         continue
@@ -570,10 +604,77 @@ export class DocRecordsService {
     }
 
     const firstWeekStart = periodStart
-    const firstWeekEnd = dayjs(periodStart).add(4, 'day').format('YYYY-MM-DD')
+    const firstWeekEnd = dayjs(start).subtract(1, 'day').format('YYYY-MM-DD')
 
     const secondWeekStart = start
     const secondWeekEnd = end
+
+    const calculateAllocatedTaskTime = (task: TaskWithResult) => {
+      const firstWeekReportedTime = calculateReportTime(
+        task.reports,
+        firstWeekStart,
+        firstWeekEnd,
+      )
+      const secondWeekReportedTime = calculateReportTime(
+        task.reports,
+        secondWeekStart,
+        secondWeekEnd,
+      )
+      const reportsTotal = firstWeekReportedTime + secondWeekReportedTime
+      const taskHours = this.parseNumber(task[TaskCodes.hours])
+
+      if (taskHours <= 0 || reportsTotal <= 0) {
+        return {
+          firstWeekTime: this.roundTime(firstWeekReportedTime),
+          secondWeekTime: this.roundTime(secondWeekReportedTime),
+        }
+      }
+
+      if (reportsTotal > taskHours) {
+        const firstWeekTime = Math.min(firstWeekReportedTime, taskHours)
+        const secondWeekTime = Math.min(
+          secondWeekReportedTime,
+          Math.max(taskHours - firstWeekTime, 0),
+        )
+
+        return {
+          firstWeekTime: this.roundTime(firstWeekTime),
+          secondWeekTime: this.roundTime(secondWeekTime),
+        }
+      }
+
+      const remainingTime = taskHours - reportsTotal
+      const hasFirstWeekReports = firstWeekReportedTime > 0
+      const hasSecondWeekReports = secondWeekReportedTime > 0
+      const activeWeeksCount = Number(hasFirstWeekReports) + Number(hasSecondWeekReports)
+      const additionPerWeek =
+        activeWeeksCount > 0 ? remainingTime / activeWeeksCount : 0
+
+      return {
+        firstWeekTime: this.roundTime(
+          firstWeekReportedTime +
+            (hasFirstWeekReports ? additionPerWeek : 0),
+        ),
+        secondWeekTime: this.roundTime(
+          secondWeekReportedTime +
+            (hasSecondWeekReports ? additionPerWeek : 0),
+        ),
+      }
+    }
+
+    for (const item of result) {
+      item.tasks = item.tasks.map((task) => {
+        const allocatedTime = calculateAllocatedTaskTime(task)
+
+        return {
+          ...task,
+          ...allocatedTime,
+          timeSpent: this.roundTime(
+            allocatedTime.firstWeekTime + allocatedTime.secondWeekTime,
+          ),
+        }
+      })
+    }
 
     const calculateTaskReportTime = (
       items: TaskWithResult[],
@@ -581,34 +682,36 @@ export class DocRecordsService {
       end: string,
     ) => {
       return items.reduce((sum, task) => {
+        if (start === firstWeekStart && end === firstWeekEnd) {
+          return sum + (task.firstWeekTime ?? 0)
+        }
+
+        if (start === secondWeekStart && end === secondWeekEnd) {
+          return sum + (task.secondWeekTime ?? 0)
+        }
+
         return sum + calculateReportTime(task.reports, start, end)
       }, 0)
     }
 
     const allTasks = result.flatMap((item) => item.tasks ?? [])
 
-    const InternalCommsReports =
-      await this.bitrixService.listAllItems<ReportProps>({
-        entityTypeId: EntityTypeIds.reports,
-        select: reportSelectFields,
-        filter: {
-          [DailyReportCodes.activityType]: '402',
-          [DailyReportCodes.company]: companyId,
-          '>=begindate': periodFilterStart,
-          '<=begindate': periodFilterEnd,
-        },
-      })
-    const ExternalCommsReports =
-      await this.bitrixService.listAllItems<ReportProps>({
-        entityTypeId: EntityTypeIds.reports,
-        select: reportSelectFields,
-        filter: {
-          [DailyReportCodes.activityType]: '417',
-          [DailyReportCodes.company]: companyId,
-          '>=begindate': periodFilterStart,
-          '<=begindate': periodFilterEnd,
-        },
-      })
+    const InternalCommsReports = await this.getConfirmedClientReports(
+      companyId,
+      periodFilterStart,
+      periodFilterEnd,
+      {
+        [DailyReportCodes.activityType]: '402',
+      },
+    )
+    const ExternalCommsReports = await this.getConfirmedClientReports(
+      companyId,
+      periodFilterStart,
+      periodFilterEnd,
+      {
+        [DailyReportCodes.activityType]: '417',
+      },
+    )
 
     const allReports = [...InternalCommsReports, ...ExternalCommsReports]
 

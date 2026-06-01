@@ -38,6 +38,7 @@ export type TaskWithResult = TaskProps & {
   firstWeekTime?: number
   secondWeekTime?: number
   reports: ReportProps[]
+  allReports?: ReportProps[]
 }
 
 export type GroupedTasksWithTimeSpent = Record<string, TaskWithTimeSpent[]>

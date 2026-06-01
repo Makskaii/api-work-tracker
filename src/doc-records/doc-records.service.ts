@@ -95,6 +95,15 @@ export class DocRecordsService {
     return Number(value.toFixed(2))
   }
 
+  private getReportsWeeksCount(reports: ReportProps[]): number {
+    const reportWeeks = reports
+      .map((report) => dayjs(report.begindate))
+      .filter((date) => date.isValid())
+      .map((date) => date.startOf('week').format('YYYY-MM-DD'))
+
+    return Math.max(new Set(reportWeeks).size, 1)
+  }
+
   private formatBitrixDayStart(date: string) {
     return dayjs(date).startOf('day').format('YYYY-MM-DDTHH:mm:ssZ')
   }
@@ -174,6 +183,29 @@ export class DocRecordsService {
             [DailyReportCodes.parentId]: taskId,
             '>=begindate': filterStart,
             '<=begindate': filterEnd,
+            stageId: 'DT1060_15:PREPARATION',
+          },
+        }),
+      ),
+    )
+
+    return reportsResponses.reduce<Record<string, ReportProps[]>>(
+      (acc, reports, index) => {
+        acc[taskIds[index]] = Array.isArray(reports) ? reports : []
+        return acc
+      },
+      {},
+    )
+  }
+
+  private async getAllReportsMapByTaskIds(taskIds: string[]) {
+    const reportsResponses = await Promise.all(
+      taskIds.map((taskId) =>
+        this.bitrixService.listAllItems<ReportProps>({
+          entityTypeId: EntityTypeIds.reports,
+          select: reportSelectFields,
+          filter: {
+            [DailyReportCodes.parentId]: taskId,
             stageId: 'DT1060_15:PREPARATION',
           },
         }),
@@ -497,6 +529,7 @@ export class DocRecordsService {
     const reportsMap = this.groupReportsByParentTaskId(reports)
     const reportTaskIds = this.getUniqueReportTaskIds(reports)
     const tasks = await this.getTasksByIds(reportTaskIds)
+    const allReportsMap = await this.getAllReportsMapByTaskIds(reportTaskIds)
     const tasksByProjectId = new Map<string, TaskWithResult[]>()
 
     for (const task of tasks) {
@@ -526,6 +559,7 @@ export class DocRecordsService {
         result: taskResult,
         timeSpent,
         reports: taskReports,
+        allReports: allReportsMap[taskId] ?? taskReports,
       })
 
       tasksByProjectId.set(projectKey, projectTasks)
@@ -620,7 +654,10 @@ export class DocRecordsService {
         secondWeekStart,
         secondWeekEnd,
       )
-      const reportsTotal = firstWeekReportedTime + secondWeekReportedTime
+      const allTaskReports = task.allReports ?? task.reports
+      const reportsTotal = allTaskReports.reduce((sum, report) => {
+        return sum + this.parseSpentTime(report[DailyReportCodes.timeSpent])
+      }, 0)
       const taskHours = this.parseNumber(task[TaskCodes.hours])
 
       if (
@@ -634,20 +671,9 @@ export class DocRecordsService {
         }
       }
 
-      if (reportsTotal > taskHours) {
-        const firstWeekTime = this.roundTime(
-          (firstWeekReportedTime / reportsTotal) * taskHours,
-        )
-
-        return {
-          firstWeekTime,
-          secondWeekTime: this.roundTime(taskHours - firstWeekTime),
-        }
-      }
-
       const hasFirstWeekReports = firstWeekReportedTime > 0
       const hasSecondWeekReports = secondWeekReportedTime > 0
-      const activeWeeksCount = Number(hasFirstWeekReports) + Number(hasSecondWeekReports)
+      const activeWeeksCount = this.getReportsWeeksCount(allTaskReports)
       const additionPerWeek =
         activeWeeksCount > 0 ? (taskHours - reportsTotal) / activeWeeksCount : 0
 

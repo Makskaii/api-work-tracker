@@ -3,8 +3,8 @@
 branch="$(git rev-parse --abbrev-ref HEAD)"
 remote_name="$1"
 
-upstream_url="$(git remote get-url upstream 2>/dev/null)"
-current_remote_url="$(git remote get-url "$remote_name" 2>/dev/null)"
+upstream_url="$(git remote get-url upstream 2>/dev/null || true)"
+current_remote_url="$(git remote get-url "$remote_name" 2>/dev/null || true)"
 
 if [ "$branch" = "main" ] && [ "$current_remote_url" = "$upstream_url" ]; then
   echo "Push to upstream/main is forbidden."

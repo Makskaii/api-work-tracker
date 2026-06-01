@@ -371,7 +371,7 @@ export class HtmlBuilderService {
 
               const spent = Number(report[DailyReportCodes.timeSpent])
               const spentText =
-                Number.isFinite(spent) && spent > 0 ? `${spent} ч.` : ''
+                Number.isFinite(spent) && spent > 0 ? `${spent.toFixed(2)} ч.` : ''
 
               return `
               <div class="comm-entry">
@@ -423,7 +423,7 @@ export class HtmlBuilderService {
       return `
       <div class="week-block">
         <h2 class="week-title">
-          ${this.escapeHtml(title)} (${this.escapeHtml(start)} — ${this.escapeHtml(end)}) — ${spent} ч.
+          ${this.escapeHtml(title)} (${this.escapeHtml(start)} — ${this.escapeHtml(end)}) — ${spent.toFixed(2)} ч.
         </h2>
 
         ${renderCommList('External comms', externalComms)}
@@ -473,7 +473,7 @@ export class HtmlBuilderService {
               (row) => `
                 <tr>
                   <td>${row.label}</td>
-                  <td>${row.value}</td>
+                  <td>${Number(row.value).toFixed(2)}</td>
                 </tr>
               `,
             )

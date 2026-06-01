@@ -353,6 +353,33 @@ export class HtmlBuilderService {
       .replace(/'/g, '&#39;')
   }
 
+  private parseHours(value: unknown) {
+    if (typeof value === 'number') {
+      return value
+    }
+
+    if (typeof value === 'string') {
+      const match = value.replace(',', '.').match(/-?\d+(?:\.\d+)?/)
+      return match ? Number(match[0]) : null
+    }
+
+    return null
+  }
+
+  private formatHours(value: unknown, options?: { hideZero?: boolean }) {
+    const hours = this.parseHours(value)
+
+    if (hours === null || !Number.isFinite(hours)) {
+      return ''
+    }
+
+    if (options?.hideZero && hours <= 0) {
+      return ''
+    }
+
+    return `${hours.toFixed(2)} ч.`
+  }
+
   buildClientReportHtml({
     client,
     projects,
@@ -369,9 +396,10 @@ export class HtmlBuilderService {
                 String(report[DailyReportCodes.title] ?? ''),
               ).replace(/\n/g, '<br />')
 
-              const spent = Number(report[DailyReportCodes.timeSpent])
-              const spentText =
-                Number.isFinite(spent) && spent > 0 ? `${spent.toFixed(2)} ч.` : ''
+              const spentText = this.formatHours(
+                report[DailyReportCodes.timeSpent],
+                { hideZero: true },
+              )
 
               return `
               <div class="comm-entry">
@@ -423,7 +451,7 @@ export class HtmlBuilderService {
       return `
       <div class="week-block">
         <h2 class="week-title">
-          ${this.escapeHtml(title)} (${this.escapeHtml(start)} — ${this.escapeHtml(end)}) — ${spent.toFixed(2)} ч.
+          ${this.escapeHtml(title)} (${this.escapeHtml(start)} — ${this.escapeHtml(end)}) — ${this.formatHours(spent)}
         </h2>
 
         ${renderCommList('External comms', externalComms)}
@@ -472,8 +500,8 @@ export class HtmlBuilderService {
             .map(
               (row) => `
                 <tr>
-                  <td>${row.label}</td>
-                  <td>${Number(row.value).toFixed(2)}</td>
+                  <td>${this.escapeHtml(row.label)}</td>
+                  <td>${this.formatHours(row.value)}</td>
                 </tr>
               `,
             )
@@ -501,7 +529,8 @@ export class HtmlBuilderService {
               '<br />',
             )
 
-            const timeSpent = task.timeSpent > 0 ? `${task.timeSpent} ч.` : ''
+            const timeSpent =
+              task.timeSpent > 0 ? this.formatHours(task.timeSpent) : ''
 
             return `
             <div class="task-entry">
@@ -540,7 +569,7 @@ export class HtmlBuilderService {
         <div class="project-block">
           <h2 class="project-title">
             ${this.escapeHtml(project.title ?? 'Без названия')}
-            (${projectTimeSpent} ч.)
+            (${this.formatHours(projectTimeSpent)})
           </h2>
 
           ${tasksHtml || '<div class="empty">Нет задач</div>'}

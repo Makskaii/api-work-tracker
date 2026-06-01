@@ -623,7 +623,11 @@ export class DocRecordsService {
       const reportsTotal = firstWeekReportedTime + secondWeekReportedTime
       const taskHours = this.parseNumber(task[TaskCodes.hours])
 
-      if (taskHours <= 0 || reportsTotal <= 0) {
+      if (
+        taskHours <= 0 ||
+        reportsTotal <= 0 ||
+        task.stageId !== 'DT1072_18:UC_6JNSDG'
+      ) {
         return {
           firstWeekTime: this.roundTime(firstWeekReportedTime),
           secondWeekTime: this.roundTime(secondWeekReportedTime),
@@ -631,24 +635,21 @@ export class DocRecordsService {
       }
 
       if (reportsTotal > taskHours) {
-        const firstWeekTime = Math.min(firstWeekReportedTime, taskHours)
-        const secondWeekTime = Math.min(
-          secondWeekReportedTime,
-          Math.max(taskHours - firstWeekTime, 0),
+        const firstWeekTime = this.roundTime(
+          (firstWeekReportedTime / reportsTotal) * taskHours,
         )
 
         return {
-          firstWeekTime: this.roundTime(firstWeekTime),
-          secondWeekTime: this.roundTime(secondWeekTime),
+          firstWeekTime,
+          secondWeekTime: this.roundTime(taskHours - firstWeekTime),
         }
       }
 
-      const remainingTime = taskHours - reportsTotal
       const hasFirstWeekReports = firstWeekReportedTime > 0
       const hasSecondWeekReports = secondWeekReportedTime > 0
       const activeWeeksCount = Number(hasFirstWeekReports) + Number(hasSecondWeekReports)
       const additionPerWeek =
-        activeWeeksCount > 0 ? remainingTime / activeWeeksCount : 0
+        activeWeeksCount > 0 ? (taskHours - reportsTotal) / activeWeeksCount : 0
 
       return {
         firstWeekTime: this.roundTime(

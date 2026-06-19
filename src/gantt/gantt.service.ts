@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -319,6 +319,10 @@ export class GanttService {
       throw new BadRequestException(
         'One-time event requires planStartDate or factStartDate',
       )
+    }
+
+    if (event.factEndDate && !event.factStartDate) {
+      throw new BadRequestException('factStartDate is required with factEndDate')
     }
 
     if (event.factStartDate && event.factEndDate) {

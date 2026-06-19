@@ -1,4 +1,4 @@
-﻿export enum TaskCodes {
+export enum TaskCodes {
   description = 'ufCrm14_1770731622242',
   stage = 'ufCrm14_1770890673468',
   estimateTime = 'ufCrm14_1770731674952',

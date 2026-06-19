@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common'
+﻿import { Module } from '@nestjs/common'
 import { ConfigModule, ConfigService } from '@nestjs/config'
 import { ScheduleModule } from '@nestjs/schedule'
 import { TypeOrmModule } from '@nestjs/typeorm'
@@ -8,6 +8,7 @@ import { AuthModule } from './auth/auth.module'
 import { ClientsModule } from './clients/clients.module'
 import { DocRecordsModule } from './doc-records/doc-records.module'
 import { EmployeeModule } from './employee/employee.module'
+import { GanttModule } from './gantt/gantt.module'
 import { getTypeOrmLoggingOptions } from './shared/logging/logging.config'
 import { RedisModule } from './shared/redis/redis.module'
 import { SprintsModule } from './sprints/sprints.module'
@@ -49,3 +50,4 @@ import { UserSprintsModule } from './user-sprints/user-sprints.module'
   providers: [AppService],
 })
 export class AppModule {}
+

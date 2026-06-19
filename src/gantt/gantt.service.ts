@@ -5,7 +5,7 @@
 } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { createReadStream } from 'fs'
-import { mkdir, rm, writeFile } from 'fs/promises'
+import { access, mkdir, rm, stat, writeFile } from 'fs/promises'
 import { randomUUID } from 'crypto'
 import { join, posix } from 'path'
 import { Repository } from 'typeorm'
@@ -137,7 +137,7 @@ export class GanttService {
       bitrixProjectId: this.normalizeRequiredString(projectId, 'projectId'),
       entityType: this.normalizeIncidentEntityType(dto.entityType),
       entityId: this.normalizeRequiredString(dto.entityId, 'entityId'),
-      title: this.normalizeRequiredString(dto.title, 'title'),
+      title: this.normalizeIncidentTitle(dto.title),
       description: this.normalizeOptionalString(dto.description),
       incidentDate: this.normalizeRequiredDate(dto.incidentDate, 'incidentDate'),
     })
@@ -162,7 +162,7 @@ export class GanttService {
     }
 
     if (dto.title !== undefined) {
-      incident.title = this.normalizeRequiredString(dto.title, 'title')
+      incident.title = this.normalizeIncidentTitle(dto.title)
     }
 
     if (dto.description !== undefined) {
@@ -241,12 +241,20 @@ export class GanttService {
     const absolutePath = this.getAbsoluteStoragePath(file.storagePath)
 
     try {
-      return {
-        file,
-        stream: createReadStream(absolutePath),
+      const fileStat = await stat(absolutePath)
+
+      if (!fileStat.isFile()) {
+        throw new Error('Storage path is not a file')
       }
+
+      await access(absolutePath)
     } catch {
       throw new NotFoundException('Incident file not found on disk')
+    }
+
+    return {
+      file,
+      stream: createReadStream(absolutePath),
     }
   }
 
@@ -301,12 +309,37 @@ export class GanttService {
         )
       }
 
-      return
-    }
-
-    if (!event.planStartDate && !event.factStartDate) {
+      this.validateDateOrder(
+        event.planStartDate,
+        event.planEndDate,
+        'planStartDate',
+        'planEndDate',
+      )
+    } else if (!event.planStartDate && !event.factStartDate) {
       throw new BadRequestException(
         'One-time event requires planStartDate or factStartDate',
+      )
+    }
+
+    if (event.factStartDate && event.factEndDate) {
+      this.validateDateOrder(
+        event.factStartDate,
+        event.factEndDate,
+        'factStartDate',
+        'factEndDate',
+      )
+    }
+  }
+
+  private validateDateOrder(
+    startDate: string,
+    endDate: string,
+    startFieldName: string,
+    endFieldName: string,
+  ): void {
+    if (Date.parse(startDate) > Date.parse(endDate)) {
+      throw new BadRequestException(
+        `${startFieldName} must be earlier than or equal to ${endFieldName}`,
       )
     }
   }
@@ -348,6 +381,10 @@ export class GanttService {
     const normalizedValue = String(value ?? '').trim()
 
     return normalizedValue || null
+  }
+
+  private normalizeIncidentTitle(value: unknown): string {
+    return this.normalizeOptionalString(value) ?? 'Инцидент'
   }
 
   private normalizeDate(
@@ -423,4 +460,5 @@ export class GanttService {
     await rm(this.getAbsoluteStoragePath(storagePath), { force: true })
   }
 }
+
 

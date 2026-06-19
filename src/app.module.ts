@@ -45,9 +45,11 @@ import { UserSprintsModule } from './user-sprints/user-sprints.module'
     AuthModule,
     SprintsModule,
     EmployeeModule,
+    GanttModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
 export class AppModule {}
+
 

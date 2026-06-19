@@ -16,6 +16,10 @@
 } from '@nestjs/common'
 import { FilesInterceptor } from '@nestjs/platform-express'
 import type { Response } from 'express'
+import {
+  GANTT_INCIDENT_MAX_FILE_SIZE,
+  GANTT_INCIDENT_MAX_FILES,
+} from 'src/constants/const'
 import { CreateGanttEventDto } from './dto/create-gantt-event.dto'
 import { CreateGanttIncidentDto } from './dto/create-gantt-incident.dto'
 import { UpdateGanttEventDto } from './dto/update-gantt-event.dto'
@@ -90,7 +94,13 @@ export class GanttController {
   }
 
   @Post('incidents/:incidentId/files')
-  @UseInterceptors(FilesInterceptor('files'))
+  @UseInterceptors(
+    FilesInterceptor('files', GANTT_INCIDENT_MAX_FILES, {
+      limits: {
+        fileSize: GANTT_INCIDENT_MAX_FILE_SIZE,
+      },
+    }),
+  )
   addIncidentFiles(
     @Param('incidentId', ParseIntPipe) incidentId: number,
     @UploadedFiles() files: GanttUploadedFile[] = [],
@@ -128,3 +138,4 @@ export class GanttController {
     return this.ganttService.deleteIncidentFile(incidentId, fileId)
   }
 }
+

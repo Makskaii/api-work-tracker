@@ -14,7 +14,7 @@ export const getNestLoggerLevels = (
     return ['error', 'warn', 'log']
   }
 
-  return ['error', 'warn', 'log', 'debug', 'verbose']
+  return ['error', 'warn', 'log']
 }
 
 export const getTypeOrmLoggingOptions = (
@@ -25,5 +25,6 @@ export const getTypeOrmLoggingOptions = (
     return ['error', 'warn']
   }
 
-  return ['query', 'error', 'warn', 'schema', 'migration']
+  return ['error', 'warn', 'schema', 'migration']
 }
+

@@ -1,4 +1,4 @@
-import {
+﻿import {
   Body,
   Controller,
   Delete,
@@ -12,15 +12,15 @@ import {
 import { CreateProjectGanttEventDto } from './dto/create-project-gantt-event.dto'
 import { CreateProjectGanttStageDto } from './dto/create-project-gantt-stage.dto'
 import { CreateProjectPaymentDto } from './dto/create-project-payment.dto'
-import { CreateProjectReportProjectDto } from './dto/create-project-report-project.dto'
+import { CreateReportProjectDto } from './dto/create-project-report-project.dto'
 import { UpdateProjectGanttEventDto } from './dto/update-project-gantt-event.dto'
 import { UpdateProjectGanttStageDto } from './dto/update-project-gantt-stage.dto'
 import { UpdateProjectPaymentDto } from './dto/update-project-payment.dto'
-import { UpdateProjectReportProjectDto } from './dto/update-project-report-project.dto'
+import { UpdateReportProjectDto } from './dto/update-project-report-project.dto'
 import { ProjectGanttEvent } from './entities/project-gantt-event.entity'
 import { ProjectGanttStage } from './entities/project-gantt-stage.entity'
 import { ProjectPayment } from './entities/project-payment.entity'
-import { ProjectReportProject } from './entities/project-report-project.entity'
+import { ReportProject } from './entities/project-report-project.entity'
 import { ProjectReportsService } from './project-reports.service'
 
 @Controller('project-reports')
@@ -28,29 +28,29 @@ export class ProjectReportsController {
   constructor(private readonly projectReportsService: ProjectReportsService) {}
 
   @Get('projects')
-  findProjects(): Promise<ProjectReportProject[]> {
+  findProjects(): Promise<ReportProject[]> {
     return this.projectReportsService.findProjects()
   }
 
   @Post('projects')
   createProject(
-    @Body() dto: CreateProjectReportProjectDto,
-  ): Promise<ProjectReportProject> {
+    @Body() dto: CreateReportProjectDto,
+  ): Promise<ReportProject> {
     return this.projectReportsService.createProject(dto)
   }
 
   @Get('projects/:projectId')
   findProject(
     @Param('projectId', ParseIntPipe) projectId: number,
-  ): Promise<ProjectReportProject> {
+  ): Promise<ReportProject> {
     return this.projectReportsService.findProject(projectId)
   }
 
   @Patch('projects/:projectId')
   updateProject(
     @Param('projectId', ParseIntPipe) projectId: number,
-    @Body() dto: UpdateProjectReportProjectDto,
-  ): Promise<ProjectReportProject> {
+    @Body() dto: UpdateReportProjectDto,
+  ): Promise<ReportProject> {
     return this.projectReportsService.updateProject(projectId, dto)
   }
 

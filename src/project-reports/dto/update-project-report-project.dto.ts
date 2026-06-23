@@ -1,6 +1,6 @@
-import { PartialType } from '@nestjs/mapped-types'
-import { CreateProjectReportProjectDto } from './create-project-report-project.dto'
+﻿import { PartialType } from '@nestjs/mapped-types'
+import { CreateReportProjectDto } from './create-project-report-project.dto'
 
-export class UpdateProjectReportProjectDto extends PartialType(
-  CreateProjectReportProjectDto,
+export class UpdateReportProjectDto extends PartialType(
+  CreateReportProjectDto,
 ) {}

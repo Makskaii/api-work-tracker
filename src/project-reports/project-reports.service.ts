@@ -1,21 +1,21 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+﻿import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { Repository } from 'typeorm'
 import { CreateProjectGanttEventDto } from './dto/create-project-gantt-event.dto'
 import { CreateProjectGanttStageDto } from './dto/create-project-gantt-stage.dto'
 import { CreateProjectPaymentDto } from './dto/create-project-payment.dto'
-import { CreateProjectReportProjectDto } from './dto/create-project-report-project.dto'
+import { CreateReportProjectDto } from './dto/create-project-report-project.dto'
 import { UpdateProjectGanttEventDto } from './dto/update-project-gantt-event.dto'
 import { UpdateProjectGanttStageDto } from './dto/update-project-gantt-stage.dto'
 import { UpdateProjectPaymentDto } from './dto/update-project-payment.dto'
-import { UpdateProjectReportProjectDto } from './dto/update-project-report-project.dto'
+import { UpdateReportProjectDto } from './dto/update-project-report-project.dto'
 import {
   ProjectGanttEvent,
   ProjectGanttEventKind,
 } from './entities/project-gantt-event.entity'
 import { ProjectGanttStage } from './entities/project-gantt-stage.entity'
 import { ProjectPayment } from './entities/project-payment.entity'
-import { ProjectReportProject } from './entities/project-report-project.entity'
+import { ReportProject } from './entities/project-report-project.entity'
 
 const DEFAULT_PAYMENTS_STAGE_CODE = 'payments'
 const DEFAULT_PAYMENTS_STAGE_TITLE = 'Оплаты'
@@ -23,8 +23,8 @@ const DEFAULT_PAYMENTS_STAGE_TITLE = 'Оплаты'
 @Injectable()
 export class ProjectReportsService {
   constructor(
-    @InjectRepository(ProjectReportProject)
-    private readonly projectsRepository: Repository<ProjectReportProject>,
+    @InjectRepository(ReportProject)
+    private readonly projectsRepository: Repository<ReportProject>,
     @InjectRepository(ProjectGanttStage)
     private readonly stagesRepository: Repository<ProjectGanttStage>,
     @InjectRepository(ProjectGanttEvent)
@@ -33,15 +33,15 @@ export class ProjectReportsService {
     private readonly paymentsRepository: Repository<ProjectPayment>,
   ) {}
 
-  findProjects(): Promise<ProjectReportProject[]> {
+  findProjects(): Promise<ReportProject[]> {
     return this.projectsRepository.find({
       order: { id: 'DESC' },
     })
   }
 
   async createProject(
-    dto: CreateProjectReportProjectDto,
-  ): Promise<ProjectReportProject> {
+    dto: CreateReportProjectDto,
+  ): Promise<ReportProject> {
     const project = this.projectsRepository.create({
       ...dto,
       title: dto.title.trim(),
@@ -50,14 +50,14 @@ export class ProjectReportsService {
     return this.projectsRepository.save(project)
   }
 
-  findProject(projectId: number): Promise<ProjectReportProject> {
+  findProject(projectId: number): Promise<ReportProject> {
     return this.findProjectOrFail(projectId)
   }
 
   async updateProject(
     projectId: number,
-    dto: UpdateProjectReportProjectDto,
-  ): Promise<ProjectReportProject> {
+    dto: UpdateReportProjectDto,
+  ): Promise<ReportProject> {
     const project = await this.findProjectOrFail(projectId)
 
     Object.assign(project, dto)

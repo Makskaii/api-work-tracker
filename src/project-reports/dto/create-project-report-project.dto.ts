@@ -1,8 +1,8 @@
-import { Type } from 'class-transformer'
+﻿import { Type } from 'class-transformer'
 import { IsDateString, IsEnum, IsNumber, IsOptional, IsString } from 'class-validator'
-import { ProjectReportProjectType } from '../entities/project-report-project.entity'
+import { ReportProjectType } from '../entities/project-report-project.entity'
 
-export class CreateProjectReportProjectDto {
+export class CreateReportProjectDto {
   @IsString()
   title!: string
 
@@ -12,8 +12,8 @@ export class CreateProjectReportProjectDto {
   projectAmount?: number | null
 
   @IsOptional()
-  @IsEnum(ProjectReportProjectType)
-  projectType?: ProjectReportProjectType
+  @IsEnum(ReportProjectType)
+  projectType?: ReportProjectType
 
   @IsOptional()
   @IsString()

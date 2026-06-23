@@ -1,4 +1,4 @@
-import {
+﻿import {
   Column,
   CreateDateColumn,
   Entity,
@@ -7,7 +7,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm'
 
-export enum ProjectReportProjectType {
+export enum ReportProjectType {
   None = 'none',
   Waterfall = 'waterfall',
   Support = 'support',
@@ -15,7 +15,7 @@ export enum ProjectReportProjectType {
 
 @Entity('project_report_projects')
 @Index('idx_project_report_projects_project_type', ['projectType'])
-export class ProjectReportProject {
+export class ReportProject {
   @PrimaryGeneratedColumn({ type: 'bigint', unsigned: true })
   id!: number
 
@@ -25,8 +25,8 @@ export class ProjectReportProject {
   @Column({ name: 'project_amount', type: 'double', nullable: true })
   projectAmount!: number | null
 
-  @Column({ name: 'project_type', type: 'enum', enum: ProjectReportProjectType, default: ProjectReportProjectType.None })
-  projectType!: ProjectReportProjectType
+  @Column({ name: 'project_type', type: 'enum', enum: ReportProjectType, default: ReportProjectType.None })
+  projectType!: ReportProjectType
 
   @Column({ name: 'project_goal', type: 'text', nullable: true })
   projectGoal!: string | null

@@ -1,4 +1,4 @@
-import 'dotenv/config'
+﻿import 'dotenv/config'
 import { DataSource } from 'typeorm'
 import { ClientPurchasedHoursEvent } from '../clients/entities/client-purchased-hours-event.entity'
 import { Client } from '../clients/entities/client.entity'
@@ -9,7 +9,7 @@ import { GanttIncident } from '../gantt/entities/gantt-incident.entity'
 import { ProjectGanttEvent } from '../project-reports/entities/project-gantt-event.entity'
 import { ProjectGanttStage } from '../project-reports/entities/project-gantt-stage.entity'
 import { ProjectPayment } from '../project-reports/entities/project-payment.entity'
-import { ProjectReportProject } from '../project-reports/entities/project-report-project.entity'
+import { ReportProject } from '../project-reports/entities/project-report-project.entity'
 
 export default new DataSource({
   type: 'mysql',
@@ -25,7 +25,7 @@ export default new DataSource({
     GanttCustomEvent,
     GanttIncident,
     GanttIncidentFile,
-    ProjectReportProject,
+    ReportProject,
     ProjectGanttStage,
     ProjectGanttEvent,
     ProjectPayment,

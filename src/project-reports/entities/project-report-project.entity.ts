@@ -7,6 +7,7 @@
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm'
+import { ProjectReportEntry } from './project-report-entry.entity'
 import { ReportProjectFile } from './report-project-file.entity'
 
 export enum ReportProjectType {
@@ -119,4 +120,7 @@ export class ReportProject {
 
   @OneToMany(() => ReportProjectFile, (file) => file.project)
   files!: ReportProjectFile[]
+
+  @OneToMany(() => ProjectReportEntry, (reportEntry) => reportEntry.project)
+  reportEntries!: ProjectReportEntry[]
 }

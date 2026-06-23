@@ -15,11 +15,12 @@
   UseInterceptors,
 } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
-import { Response } from 'express'
+import type { Response } from 'express'
 import { REPORT_PROJECT_MAX_FILE_SIZE } from 'src/constants/const'
 import { CreateProjectGanttEventDto } from './dto/create-project-gantt-event.dto'
 import { CreateProjectGanttStageDto } from './dto/create-project-gantt-stage.dto'
 import { CreateProjectPaymentDto } from './dto/create-project-payment.dto'
+import { CreateProjectReportEntryDto } from './dto/create-project-report-entry.dto'
 import { CreateReportProjectDto } from './dto/create-project-report-project.dto'
 import { UpdateProjectGanttEventDto } from './dto/update-project-gantt-event.dto'
 import { UpdateProjectGanttStageDto } from './dto/update-project-gantt-stage.dto'
@@ -28,12 +29,12 @@ import { UpdateReportProjectDto } from './dto/update-project-report-project.dto'
 import { ProjectGanttEvent } from './entities/project-gantt-event.entity'
 import { ProjectGanttStage } from './entities/project-gantt-stage.entity'
 import { ProjectPayment } from './entities/project-payment.entity'
+import { ProjectReportEntryFile } from './entities/project-report-entry-file.entity'
+import { ProjectReportEntry } from './entities/project-report-entry.entity'
 import { ReportProject } from './entities/project-report-project.entity'
 import { ReportProjectFile, ReportProjectFileKind } from './entities/report-project-file.entity'
-import {
-  ProjectReportsService,
-  ReportProjectUploadedFile,
-} from './project-reports.service'
+import { ProjectReportsService } from './project-reports.service'
+import type { ReportProjectUploadedFile } from './project-reports.service'
 
 @Controller('project-reports')
 export class ProjectReportsController {
@@ -118,6 +119,88 @@ export class ProjectReportsController {
     @Param('fileId', ParseIntPipe) fileId: number,
   ): Promise<void> {
     return this.projectReportsService.deleteProjectFile(projectId, fileId)
+  }
+
+  @Get('projects/:projectId/reports')
+  findProjectReportEntries(
+    @Param('projectId', ParseIntPipe) projectId: number,
+  ): Promise<ProjectReportEntry[]> {
+    return this.projectReportsService.findProjectReportEntries(projectId)
+  }
+
+  @Post('projects/:projectId/reports')
+  createProjectReportEntry(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Body() dto: CreateProjectReportEntryDto,
+  ): Promise<ProjectReportEntry> {
+    return this.projectReportsService.createProjectReportEntry(projectId, dto)
+  }
+
+  @Delete('projects/:projectId/reports/:reportId')
+  @HttpCode(204)
+  deleteProjectReportEntry(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Param('reportId', ParseIntPipe) reportId: number,
+  ): Promise<void> {
+    return this.projectReportsService.deleteProjectReportEntry(projectId, reportId)
+  }
+
+  @Post('projects/:projectId/reports/:reportId/files')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: {
+        fileSize: REPORT_PROJECT_MAX_FILE_SIZE,
+      },
+    }),
+  )
+  addProjectReportEntryFile(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Param('reportId', ParseIntPipe) reportId: number,
+    @UploadedFile() file?: ReportProjectUploadedFile,
+  ): Promise<ProjectReportEntryFile> {
+    return this.projectReportsService.addProjectReportEntryFile(
+      projectId,
+      reportId,
+      file,
+    )
+  }
+
+  @Get('projects/:projectId/reports/:reportId/files/:fileId')
+  @Header('Content-Disposition', 'attachment')
+  async getProjectReportEntryFile(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Param('reportId', ParseIntPipe) reportId: number,
+    @Param('fileId', ParseIntPipe) fileId: number,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<StreamableFile> {
+    const { file, stream } =
+      await this.projectReportsService.getProjectReportEntryFile(
+        projectId,
+        reportId,
+        fileId,
+      )
+
+    response.setHeader('Content-Type', file.mimeType)
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(file.originalName)}"`,
+    )
+
+    return new StreamableFile(stream)
+  }
+
+  @Delete('projects/:projectId/reports/:reportId/files/:fileId')
+  @HttpCode(204)
+  deleteProjectReportEntryFile(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Param('reportId', ParseIntPipe) reportId: number,
+    @Param('fileId', ParseIntPipe) fileId: number,
+  ): Promise<void> {
+    return this.projectReportsService.deleteProjectReportEntryFile(
+      projectId,
+      reportId,
+      fileId,
+    )
   }
 
   @Get('projects/:projectId/gantt/stages')

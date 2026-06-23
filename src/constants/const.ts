@@ -72,6 +72,8 @@ export const CLIENT_TASK_PROPOSAL_MAX_FILES = 10
 export const CLIENT_TASK_PROPOSAL_MAX_FILE_SIZE = 10 * 1024 * 1024
 export const GANTT_INCIDENT_MAX_FILES = 10
 export const GANTT_INCIDENT_MAX_FILE_SIZE = 10 * 1024 * 1024
+export const REPORT_PROJECT_MAX_FILES = 2
+export const REPORT_PROJECT_MAX_FILE_SIZE = 10 * 1024 * 1024
 
 export const TaskStageIds = {
   backlog: 'DT1072_18:NEW',

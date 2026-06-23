@@ -3,9 +3,11 @@
   CreateDateColumn,
   Entity,
   Index,
+  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm'
+import { ReportProjectFile } from './report-project-file.entity'
 
 export enum ReportProjectType {
   None = 'none',
@@ -114,4 +116,7 @@ export class ReportProject {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt!: Date
+
+  @OneToMany(() => ReportProjectFile, (file) => file.project)
+  files!: ReportProjectFile[]
 }

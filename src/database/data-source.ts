@@ -10,6 +10,7 @@ import { ProjectGanttEvent } from '../project-reports/entities/project-gantt-eve
 import { ProjectGanttStage } from '../project-reports/entities/project-gantt-stage.entity'
 import { ProjectPayment } from '../project-reports/entities/project-payment.entity'
 import { ReportProject } from '../project-reports/entities/project-report-project.entity'
+import { ReportProjectFile } from '../project-reports/entities/report-project-file.entity'
 
 export default new DataSource({
   type: 'mysql',
@@ -26,6 +27,7 @@ export default new DataSource({
     GanttIncident,
     GanttIncidentFile,
     ReportProject,
+    ReportProjectFile,
     ProjectGanttStage,
     ProjectGanttEvent,
     ProjectPayment,

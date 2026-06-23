@@ -4,15 +4,18 @@ import { Repository } from 'typeorm'
 import { CreateProjectGanttEventDto } from './dto/create-project-gantt-event.dto'
 import { CreateProjectGanttStageDto } from './dto/create-project-gantt-stage.dto'
 import { CreateProjectPaymentDto } from './dto/create-project-payment.dto'
+import { CreateProjectReportProjectDto } from './dto/create-project-report-project.dto'
 import { UpdateProjectGanttEventDto } from './dto/update-project-gantt-event.dto'
 import { UpdateProjectGanttStageDto } from './dto/update-project-gantt-stage.dto'
 import { UpdateProjectPaymentDto } from './dto/update-project-payment.dto'
+import { UpdateProjectReportProjectDto } from './dto/update-project-report-project.dto'
 import {
   ProjectGanttEvent,
   ProjectGanttEventKind,
 } from './entities/project-gantt-event.entity'
 import { ProjectGanttStage } from './entities/project-gantt-stage.entity'
 import { ProjectPayment } from './entities/project-payment.entity'
+import { ProjectReportProject } from './entities/project-report-project.entity'
 
 const DEFAULT_PAYMENTS_STAGE_CODE = 'payments'
 const DEFAULT_PAYMENTS_STAGE_TITLE = 'Оплаты'
@@ -20,6 +23,8 @@ const DEFAULT_PAYMENTS_STAGE_TITLE = 'Оплаты'
 @Injectable()
 export class ProjectReportsService {
   constructor(
+    @InjectRepository(ProjectReportProject)
+    private readonly projectsRepository: Repository<ProjectReportProject>,
     @InjectRepository(ProjectGanttStage)
     private readonly stagesRepository: Repository<ProjectGanttStage>,
     @InjectRepository(ProjectGanttEvent)
@@ -27,6 +32,47 @@ export class ProjectReportsService {
     @InjectRepository(ProjectPayment)
     private readonly paymentsRepository: Repository<ProjectPayment>,
   ) {}
+
+  findProjects(): Promise<ProjectReportProject[]> {
+    return this.projectsRepository.find({
+      order: { id: 'DESC' },
+    })
+  }
+
+  async createProject(
+    dto: CreateProjectReportProjectDto,
+  ): Promise<ProjectReportProject> {
+    const project = this.projectsRepository.create({
+      ...dto,
+      title: dto.title.trim(),
+    })
+
+    return this.projectsRepository.save(project)
+  }
+
+  findProject(projectId: number): Promise<ProjectReportProject> {
+    return this.findProjectOrFail(projectId)
+  }
+
+  async updateProject(
+    projectId: number,
+    dto: UpdateProjectReportProjectDto,
+  ): Promise<ProjectReportProject> {
+    const project = await this.findProjectOrFail(projectId)
+
+    Object.assign(project, dto)
+
+    if (dto.title !== undefined) {
+      project.title = dto.title.trim()
+    }
+
+    return this.projectsRepository.save(project)
+  }
+
+  async deleteProject(projectId: number): Promise<void> {
+    await this.findProjectOrFail(projectId)
+    await this.projectsRepository.delete(projectId)
+  }
 
   async findProjectStages(projectId: string): Promise<ProjectGanttStage[]> {
     await this.ensurePaymentsStage(projectId)
@@ -278,6 +324,17 @@ export class ProjectReportsService {
     )
   }
 
+  private async findProjectOrFail(projectId: number) {
+    const project = await this.projectsRepository.findOne({
+      where: { id: projectId },
+    })
+
+    if (!project) {
+      throw new NotFoundException('Project not found')
+    }
+
+    return project
+  }
   private async findStageOrFail(stageId: number) {
     const stage = await this.stagesRepository.findOne({ where: { id: stageId } })
 

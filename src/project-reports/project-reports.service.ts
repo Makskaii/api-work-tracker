@@ -62,11 +62,15 @@ export class ProjectReportsService {
     private readonly projectReportEntryFilesRepository: Repository<ProjectReportEntryFile>,
   ) {}
 
-  findProjects(): Promise<ReportProject[]> {
-    return this.projectsRepository.find({
+  async findProjects(): Promise<ReportProject[]> {
+    const projects = await this.projectsRepository.find({
       relations: { files: true },
       order: { id: 'DESC' },
     })
+
+    await this.appendNextProjectReportDates(projects)
+
+    return projects
   }
 
   async createProject(dto: CreateReportProjectDto): Promise<ReportProject> {
@@ -686,6 +690,49 @@ export class ProjectReportsService {
 
   private getCurrentDate(): string {
     return new Date().toISOString().slice(0, 10)
+  }
+
+  private async appendNextProjectReportDates(
+    projects: ReportProject[],
+  ): Promise<void> {
+    const projectIds = projects.map((project) => project.id)
+
+    if (!projectIds.length) {
+      return
+    }
+
+    const reportEntries = await this.projectReportEntriesRepository
+      .createQueryBuilder('reportEntry')
+      .select('reportEntry.projectId', 'project_id')
+      .addSelect('reportEntry.nextReportDate', 'next_report_date')
+      .where('reportEntry.projectId IN (:...projectIds)', { projectIds })
+      .andWhere('reportEntry.nextReportDate IS NOT NULL')
+      .getRawMany<{ project_id: string; next_report_date: string }>()
+
+    const today = this.getCurrentDate()
+    const dateByProjectId = new Map<number, string>()
+
+    for (const project of projects) {
+      const projectDates = reportEntries
+        .filter((entry) => Number(entry.project_id) === project.id && entry.next_report_date)
+        .map((entry) => entry.next_report_date)
+
+      const futureDate = projectDates
+        .filter((date) => date >= today)
+        .sort((left, right) => left.localeCompare(right))[0]
+
+      const pastDate = projectDates
+        .filter((date) => date < today)
+        .sort((left, right) => right.localeCompare(left))[0]
+
+      if (futureDate || pastDate) {
+        dateByProjectId.set(project.id, futureDate ?? pastDate)
+      }
+    }
+
+    for (const project of projects) {
+      project.nextProjectReportDate = dateByProjectId.get(project.id) ?? null
+    }
   }
 
   private async findReportEntryForProject(projectId: number, reportId: number) {

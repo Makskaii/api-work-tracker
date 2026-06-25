@@ -144,4 +144,6 @@ export class ReportProject {
 
   @OneToMany(() => ProjectReportEntry, (reportEntry) => reportEntry.project)
   reportEntries!: ProjectReportEntry[]
+
+  nextProjectReportDate?: string | null
 }

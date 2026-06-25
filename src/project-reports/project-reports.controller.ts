@@ -34,12 +34,22 @@ import { ProjectReportEntryFile } from './entities/project-report-entry-file.ent
 import { ProjectReportEntry } from './entities/project-report-entry.entity'
 import { ReportProject } from './entities/project-report-project.entity'
 import { ReportProjectFile, ReportProjectFileKind } from './entities/report-project-file.entity'
+import { ProjectGanttService } from './project-gantt.service'
+import { ProjectPaymentsService } from './project-payments.service'
+import { ProjectReportEntriesService } from './project-report-entries.service'
+import { ProjectReportFilesService } from './project-report-files.service'
 import { ProjectReportsService } from './project-reports.service'
-import type { ReportProjectUploadedFile } from './project-reports.service'
+import type { ReportProjectUploadedFile } from './project-reports.types'
 
 @Controller('project-reports')
 export class ProjectReportsController {
-  constructor(private readonly projectReportsService: ProjectReportsService) {}
+  constructor(
+    private readonly projectReportsService: ProjectReportsService,
+    private readonly projectReportFilesService: ProjectReportFilesService,
+    private readonly projectReportEntriesService: ProjectReportEntriesService,
+    private readonly projectGanttService: ProjectGanttService,
+    private readonly projectPaymentsService: ProjectPaymentsService,
+  ) {}
 
   @Get('projects')
   findProjects(): Promise<ReportProject[]> {
@@ -89,7 +99,7 @@ export class ProjectReportsController {
     @Param('fileKind') fileKind: ReportProjectFileKind,
     @UploadedFile() file?: ReportProjectUploadedFile,
   ): Promise<ReportProjectFile> {
-    return this.projectReportsService.addProjectFile(projectId, fileKind, file)
+    return this.projectReportFilesService.addProjectFile(projectId, fileKind, file)
   }
 
   @Get('projects/:projectId/files/:fileId')
@@ -99,7 +109,7 @@ export class ProjectReportsController {
     @Param('fileId', ParseIntPipe) fileId: number,
     @Res({ passthrough: true }) response: Response,
   ): Promise<StreamableFile> {
-    const { file, stream } = await this.projectReportsService.getProjectFile(
+    const { file, stream } = await this.projectReportFilesService.getProjectFile(
       projectId,
       fileId,
     )
@@ -119,14 +129,14 @@ export class ProjectReportsController {
     @Param('projectId', ParseIntPipe) projectId: number,
     @Param('fileId', ParseIntPipe) fileId: number,
   ): Promise<void> {
-    return this.projectReportsService.deleteProjectFile(projectId, fileId)
+    return this.projectReportFilesService.deleteProjectFile(projectId, fileId)
   }
 
   @Get('projects/:projectId/reports')
   findProjectReportEntries(
     @Param('projectId', ParseIntPipe) projectId: number,
   ): Promise<ProjectReportEntry[]> {
-    return this.projectReportsService.findProjectReportEntries(projectId)
+    return this.projectReportEntriesService.findProjectReportEntries(projectId)
   }
 
   @Post('projects/:projectId/reports')
@@ -134,7 +144,7 @@ export class ProjectReportsController {
     @Param('projectId', ParseIntPipe) projectId: number,
     @Body() dto: CreateProjectReportEntryDto,
   ): Promise<ProjectReportEntry> {
-    return this.projectReportsService.createProjectReportEntry(projectId, dto)
+    return this.projectReportEntriesService.createProjectReportEntry(projectId, dto)
   }
 
   @Patch('projects/:projectId/reports/:reportId')
@@ -143,7 +153,7 @@ export class ProjectReportsController {
     @Param('reportId', ParseIntPipe) reportId: number,
     @Body() dto: UpdateProjectReportEntryDto,
   ): Promise<ProjectReportEntry> {
-    return this.projectReportsService.updateProjectReportEntry(
+    return this.projectReportEntriesService.updateProjectReportEntry(
       projectId,
       reportId,
       dto,
@@ -156,7 +166,7 @@ export class ProjectReportsController {
     @Param('projectId', ParseIntPipe) projectId: number,
     @Param('reportId', ParseIntPipe) reportId: number,
   ): Promise<void> {
-    return this.projectReportsService.deleteProjectReportEntry(projectId, reportId)
+    return this.projectReportEntriesService.deleteProjectReportEntry(projectId, reportId)
   }
 
   @Post('projects/:projectId/reports/:reportId/files')
@@ -172,7 +182,7 @@ export class ProjectReportsController {
     @Param('reportId', ParseIntPipe) reportId: number,
     @UploadedFile() file?: ReportProjectUploadedFile,
   ): Promise<ProjectReportEntryFile> {
-    return this.projectReportsService.addProjectReportEntryFile(
+    return this.projectReportEntriesService.addProjectReportEntryFile(
       projectId,
       reportId,
       file,
@@ -188,7 +198,7 @@ export class ProjectReportsController {
     @Res({ passthrough: true }) response: Response,
   ): Promise<StreamableFile> {
     const { file, stream } =
-      await this.projectReportsService.getProjectReportEntryFile(
+      await this.projectReportEntriesService.getProjectReportEntryFile(
         projectId,
         reportId,
         fileId,
@@ -210,7 +220,7 @@ export class ProjectReportsController {
     @Param('reportId', ParseIntPipe) reportId: number,
     @Param('fileId', ParseIntPipe) fileId: number,
   ): Promise<void> {
-    return this.projectReportsService.deleteProjectReportEntryFile(
+    return this.projectReportEntriesService.deleteProjectReportEntryFile(
       projectId,
       reportId,
       fileId,
@@ -221,7 +231,7 @@ export class ProjectReportsController {
   findProjectStages(
     @Param('projectId') projectId: string,
   ): Promise<ProjectGanttStage[]> {
-    return this.projectReportsService.findProjectStages(projectId)
+    return this.projectGanttService.findProjectStages(projectId)
   }
 
   @Post('projects/:projectId/gantt/stages')
@@ -229,7 +239,7 @@ export class ProjectReportsController {
     @Param('projectId') projectId: string,
     @Body() dto: CreateProjectGanttStageDto,
   ): Promise<ProjectGanttStage> {
-    return this.projectReportsService.createProjectStage(projectId, dto)
+    return this.projectGanttService.createProjectStage(projectId, dto)
   }
 
   @Patch('gantt/stages/:stageId')
@@ -237,20 +247,20 @@ export class ProjectReportsController {
     @Param('stageId', ParseIntPipe) stageId: number,
     @Body() dto: UpdateProjectGanttStageDto,
   ): Promise<ProjectGanttStage> {
-    return this.projectReportsService.updateStage(stageId, dto)
+    return this.projectGanttService.updateStage(stageId, dto)
   }
 
   @Delete('gantt/stages/:stageId')
   @HttpCode(204)
   deleteStage(@Param('stageId', ParseIntPipe) stageId: number): Promise<void> {
-    return this.projectReportsService.deleteStage(stageId)
+    return this.projectGanttService.deleteStage(stageId)
   }
 
   @Get('projects/:projectId/gantt/events')
   findProjectEvents(
     @Param('projectId') projectId: string,
   ): Promise<ProjectGanttEvent[]> {
-    return this.projectReportsService.findProjectEvents(projectId)
+    return this.projectGanttService.findProjectEvents(projectId)
   }
 
   @Post('projects/:projectId/gantt/events')
@@ -258,7 +268,7 @@ export class ProjectReportsController {
     @Param('projectId') projectId: string,
     @Body() dto: CreateProjectGanttEventDto,
   ): Promise<ProjectGanttEvent> {
-    return this.projectReportsService.createProjectEvent(projectId, dto)
+    return this.projectGanttService.createProjectEvent(projectId, dto)
   }
 
   @Patch('gantt/events/:eventId')
@@ -266,20 +276,20 @@ export class ProjectReportsController {
     @Param('eventId', ParseIntPipe) eventId: number,
     @Body() dto: UpdateProjectGanttEventDto,
   ): Promise<ProjectGanttEvent> {
-    return this.projectReportsService.updateEvent(eventId, dto)
+    return this.projectGanttService.updateEvent(eventId, dto)
   }
 
   @Delete('gantt/events/:eventId')
   @HttpCode(204)
   deleteEvent(@Param('eventId', ParseIntPipe) eventId: number): Promise<void> {
-    return this.projectReportsService.deleteEvent(eventId)
+    return this.projectGanttService.deleteEvent(eventId)
   }
 
   @Get('projects/:projectId/payments')
   findProjectPayments(
     @Param('projectId') projectId: string,
   ): Promise<ProjectPayment[]> {
-    return this.projectReportsService.findProjectPayments(projectId)
+    return this.projectPaymentsService.findProjectPayments(projectId)
   }
 
   @Post('projects/:projectId/payments')
@@ -287,7 +297,7 @@ export class ProjectReportsController {
     @Param('projectId') projectId: string,
     @Body() dto: CreateProjectPaymentDto,
   ): Promise<ProjectPayment> {
-    return this.projectReportsService.createProjectPayment(projectId, dto)
+    return this.projectPaymentsService.createProjectPayment(projectId, dto)
   }
 
   @Patch('payments/:paymentId')
@@ -295,7 +305,7 @@ export class ProjectReportsController {
     @Param('paymentId', ParseIntPipe) paymentId: number,
     @Body() dto: UpdateProjectPaymentDto,
   ): Promise<ProjectPayment> {
-    return this.projectReportsService.updatePayment(paymentId, dto)
+    return this.projectPaymentsService.updatePayment(paymentId, dto)
   }
 
   @Delete('payments/:paymentId')
@@ -303,6 +313,6 @@ export class ProjectReportsController {
   deletePayment(
     @Param('paymentId', ParseIntPipe) paymentId: number,
   ): Promise<void> {
-    return this.projectReportsService.deletePayment(paymentId)
+    return this.projectPaymentsService.deletePayment(paymentId)
   }
 }

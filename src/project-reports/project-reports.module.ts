@@ -7,6 +7,10 @@ import { ProjectReportEntryFile } from './entities/project-report-entry-file.ent
 import { ProjectReportEntry } from './entities/project-report-entry.entity'
 import { ReportProject } from './entities/project-report-project.entity'
 import { ReportProjectFile } from './entities/report-project-file.entity'
+import { ProjectGanttService } from './project-gantt.service'
+import { ProjectPaymentsService } from './project-payments.service'
+import { ProjectReportEntriesService } from './project-report-entries.service'
+import { ProjectReportFilesService } from './project-report-files.service'
 import { ProjectReportsController } from './project-reports.controller'
 import { ProjectReportsService } from './project-reports.service'
 
@@ -23,6 +27,12 @@ import { ProjectReportsService } from './project-reports.service'
     ]),
   ],
   controllers: [ProjectReportsController],
-  providers: [ProjectReportsService],
+  providers: [
+    ProjectReportsService,
+    ProjectReportFilesService,
+    ProjectReportEntriesService,
+    ProjectGanttService,
+    ProjectPaymentsService,
+  ],
 })
 export class ProjectReportsModule {}

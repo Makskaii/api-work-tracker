@@ -25,6 +25,7 @@ import { CreateReportProjectDto } from './dto/create-project-report-project.dto'
 import { UpdateProjectGanttEventDto } from './dto/update-project-gantt-event.dto'
 import { UpdateProjectGanttStageDto } from './dto/update-project-gantt-stage.dto'
 import { UpdateProjectPaymentDto } from './dto/update-project-payment.dto'
+import { UpdateProjectReportEntryDto } from './dto/update-project-report-entry.dto'
 import { UpdateReportProjectDto } from './dto/update-project-report-project.dto'
 import { ProjectGanttEvent } from './entities/project-gantt-event.entity'
 import { ProjectGanttStage } from './entities/project-gantt-stage.entity'
@@ -134,6 +135,19 @@ export class ProjectReportsController {
     @Body() dto: CreateProjectReportEntryDto,
   ): Promise<ProjectReportEntry> {
     return this.projectReportsService.createProjectReportEntry(projectId, dto)
+  }
+
+  @Patch('projects/:projectId/reports/:reportId')
+  updateProjectReportEntry(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Param('reportId', ParseIntPipe) reportId: number,
+    @Body() dto: UpdateProjectReportEntryDto,
+  ): Promise<ProjectReportEntry> {
+    return this.projectReportsService.updateProjectReportEntry(
+      projectId,
+      reportId,
+      dto,
+    )
   }
 
   @Delete('projects/:projectId/reports/:reportId')

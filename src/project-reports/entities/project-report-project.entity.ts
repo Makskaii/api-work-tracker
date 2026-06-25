@@ -28,6 +28,27 @@ export class ReportProject {
   @Column({ name: 'project_amount', type: 'double', nullable: true })
   projectAmount!: number | null
 
+  @Column({ name: 'summary_margin_percent', type: 'double', nullable: true })
+  summaryMarginPercent!: number | null
+
+  @Column({ name: 'summary_purchased_hours', type: 'double', nullable: true })
+  summaryPurchasedHours!: number | null
+
+  @Column({ name: 'summary_plan_hours', type: 'double', nullable: true })
+  summaryPlanHours!: number | null
+
+  @Column({ name: 'summary_fact_hours', type: 'double', nullable: true })
+  summaryFactHours!: number | null
+
+  @Column({ name: 'summary_loss_hours', type: 'double', nullable: true })
+  summaryLossHours!: number | null
+
+  @Column({ name: 'summary_plan_completion_date', type: 'date', nullable: true })
+  summaryPlanCompletionDate!: string | null
+
+  @Column({ name: 'summary_fact_completion_date', type: 'date', nullable: true })
+  summaryFactCompletionDate!: string | null
+
   @Column({ name: 'project_type', type: 'enum', enum: ReportProjectType, default: ReportProjectType.None })
   projectType!: ReportProjectType
 

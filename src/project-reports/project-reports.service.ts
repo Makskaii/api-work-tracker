@@ -17,6 +17,7 @@ import { CreateReportProjectDto } from './dto/create-project-report-project.dto'
 import { UpdateProjectGanttEventDto } from './dto/update-project-gantt-event.dto'
 import { UpdateProjectGanttStageDto } from './dto/update-project-gantt-stage.dto'
 import { UpdateProjectPaymentDto } from './dto/update-project-payment.dto'
+import { UpdateProjectReportEntryDto } from './dto/update-project-report-entry.dto'
 import { UpdateReportProjectDto } from './dto/update-project-report-project.dto'
 import {
   ProjectGanttEvent,
@@ -247,6 +248,46 @@ export class ProjectReportsService {
     })
 
     return this.projectReportEntriesRepository.save(reportEntry)
+  }
+
+  async updateProjectReportEntry(
+    projectId: number,
+    reportId: number,
+    dto: UpdateProjectReportEntryDto,
+  ): Promise<ProjectReportEntry> {
+    const reportEntry = await this.findReportEntryForProject(projectId, reportId)
+
+    if (dto.authorName !== undefined) {
+      const authorName = dto.authorName.trim()
+
+      if (!authorName) {
+        throw new BadRequestException('РђРІС‚РѕСЂ РѕС‚С‡С‘С‚Р° РѕР±СЏР·Р°С‚РµР»РµРЅ')
+      }
+
+      reportEntry.authorName = authorName
+    }
+
+    if (dto.authorId !== undefined) {
+      reportEntry.authorId = dto.authorId?.trim() || null
+    }
+
+    if (dto.text !== undefined) {
+      const text = dto.text.trim()
+
+      if (!text) {
+        throw new BadRequestException('РўРµРєСЃС‚ РѕС‚С‡С‘С‚Р° РѕР±СЏР·Р°С‚РµР»РµРЅ')
+      }
+
+      reportEntry.text = text
+    }
+
+    if (dto.nextReportDate !== undefined) {
+      reportEntry.nextReportDate = dto.nextReportDate ?? null
+    }
+
+    await this.projectReportEntriesRepository.save(reportEntry)
+
+    return this.findReportEntryForProject(projectId, reportId)
   }
 
   async deleteProjectReportEntry(

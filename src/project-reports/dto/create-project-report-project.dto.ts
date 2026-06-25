@@ -12,6 +12,39 @@ export class CreateReportProjectDto {
   projectAmount?: number | null
 
   @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  summaryMarginPercent?: number | null
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  summaryPurchasedHours?: number | null
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  summaryPlanHours?: number | null
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  summaryFactHours?: number | null
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  summaryLossHours?: number | null
+
+  @IsOptional()
+  @IsDateString()
+  summaryPlanCompletionDate?: string | null
+
+  @IsOptional()
+  @IsDateString()
+  summaryFactCompletionDate?: string | null
+
+  @IsOptional()
   @IsEnum(ReportProjectType)
   projectType?: ReportProjectType
 

@@ -12,7 +12,10 @@ import { Repository } from 'typeorm'
 import { CreateProjectReportEntryDto } from './dto/create-project-report-entry.dto'
 import { UpdateProjectReportEntryDto } from './dto/update-project-report-entry.dto'
 import { ProjectReportEntryFile } from './entities/project-report-entry-file.entity'
-import { ProjectReportEntry } from './entities/project-report-entry.entity'
+import {
+  ProjectReportEntry,
+  ProjectReportEntrySource,
+} from './entities/project-report-entry.entity'
 import { ReportProject } from './entities/project-report-project.entity'
 import type { ReportProjectUploadedFile } from './project-reports.types'
 
@@ -61,6 +64,9 @@ export class ProjectReportEntriesService {
       text,
       reportDate: this.getCurrentDate(),
       nextReportDate: dto.nextReportDate ?? null,
+      source: dto.source ?? ProjectReportEntrySource.ProjectReport,
+      ganttStageId: dto.ganttStageId ?? null,
+      ganttDate: dto.ganttDate ?? null,
     })
 
     return this.projectReportEntriesRepository.save(reportEntry)
@@ -99,6 +105,18 @@ export class ProjectReportEntriesService {
 
     if (dto.nextReportDate !== undefined) {
       reportEntry.nextReportDate = dto.nextReportDate ?? null
+    }
+
+    if (dto.source !== undefined) {
+      reportEntry.source = dto.source
+    }
+
+    if (dto.ganttStageId !== undefined) {
+      reportEntry.ganttStageId = dto.ganttStageId ?? null
+    }
+
+    if (dto.ganttDate !== undefined) {
+      reportEntry.ganttDate = dto.ganttDate ?? null
     }
 
     await this.projectReportEntriesRepository.save(reportEntry)
@@ -225,7 +243,7 @@ export class ProjectReportEntriesService {
     try {
       const decoded = Buffer.from(originalName, 'latin1').toString('utf8')
 
-      if (decoded && !decoded.includes('�')) {
+      if (decoded && !decoded.includes('\uFFFD')) {
         return decoded
       }
 
@@ -236,7 +254,7 @@ export class ProjectReportEntriesService {
   }
 
   private sanitizeFileName(fileName: string): string {
-    return fileName.replace(/[^a-zA-Zа-яА-ЯёЁ0-9._ -]/g, '_')
+    return fileName.replace(/[^a-zA-Z\u0400-\u04FF0-9._ -]/g, '_')
   }
 
   private getAbsoluteStoragePath(storagePath: string): string {

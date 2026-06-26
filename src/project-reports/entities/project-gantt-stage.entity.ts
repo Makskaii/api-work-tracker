@@ -10,11 +10,25 @@ import {
 import { ProjectGanttEvent } from './project-gantt-event.entity'
 import { ProjectPayment } from './project-payment.entity'
 
+export enum ProjectGanttStageType {
+  Payments = 'payments',
+  TzWriting = 'tz_writing',
+  TzSigning = 'tz_signing',
+  Development = 'development',
+  Education = 'education',
+  Delivery = 'delivery',
+  Closing = 'closing',
+}
+
 @Entity('project_gantt_stages')
 @Index('idx_project_gantt_stages_project_id', ['projectId'])
 @Index('idx_project_gantt_stages_project_id_code', ['projectId', 'code'], {
   unique: true,
 })
+@Index('idx_project_gantt_stages_project_id_stage_type', [
+  'projectId',
+  'stageType',
+])
 export class ProjectGanttStage {
   @PrimaryGeneratedColumn({ type: 'bigint', unsigned: true })
   id!: number
@@ -27,6 +41,14 @@ export class ProjectGanttStage {
 
   @Column({ type: 'varchar', length: 64 })
   code!: string
+
+  @Column({
+    name: 'stage_type',
+    type: 'enum',
+    enum: ProjectGanttStageType,
+    nullable: true,
+  })
+  stageType!: ProjectGanttStageType | null
 
   @Column({ name: 'sort_order', type: 'int', default: 0 })
   sortOrder!: number

@@ -1,15 +1,22 @@
 import { Type } from 'class-transformer'
-import { IsInt, IsOptional, IsString } from 'class-validator'
+import { IsEnum, IsInt, IsOptional, IsString } from 'class-validator'
+import { ProjectGanttStageType } from '../entities/project-gantt-stage.entity'
 
 export class CreateProjectGanttStageDto {
+  @IsOptional()
   @IsString()
-  title!: string
+  title?: string
 
+  @IsOptional()
   @IsString()
-  code!: string
+  code?: string
+
+  @IsOptional()
+  @IsEnum(ProjectGanttStageType)
+  stageType?: ProjectGanttStageType | null
 
   @IsOptional()
   @Type(() => Number)
   @IsInt()
-  sortOrder?: number | null
+  sortOrder?: number
 }

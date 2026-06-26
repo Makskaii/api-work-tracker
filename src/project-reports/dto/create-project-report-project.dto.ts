@@ -53,6 +53,14 @@ export class CreateReportProjectDto {
   projectGoal?: string | null
 
   @IsOptional()
+  @IsDateString()
+  projectStartDate?: string | null
+
+  @IsOptional()
+  @IsDateString()
+  contractEndDate?: string | null
+
+  @IsOptional()
   @IsString()
   clientCompany?: string | null
 

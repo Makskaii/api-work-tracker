@@ -55,6 +55,12 @@ export class ReportProject {
   @Column({ name: 'project_goal', type: 'text', nullable: true })
   projectGoal!: string | null
 
+  @Column({ name: 'project_start_date', type: 'date', nullable: true })
+  projectStartDate!: string | null
+
+  @Column({ name: 'contract_end_date', type: 'date', nullable: true })
+  contractEndDate!: string | null
+
   @Column({ name: 'client_company', type: 'varchar', length: 255, nullable: true })
   clientCompany!: string | null
 

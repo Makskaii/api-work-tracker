@@ -7,6 +7,10 @@ export class CreateReportProjectDto {
   title!: string
 
   @IsOptional()
+  @IsString()
+  bitrixProjectId?: string | null
+
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   projectAmount?: number | null

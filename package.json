@@ -33,6 +33,7 @@
     "migration:revert": "npm run typeorm -- migration:revert",
     "migration:show": "npm run typeorm -- migration:show",
     "migration:show:prod": "npm run typeorm:prod -- migration:show",
+    "import:report-projects": "ts-node -r tsconfig-paths/register src/scripts/import-report-projects.ts",
     "prepare": "husky"
   },
   "dependencies": {

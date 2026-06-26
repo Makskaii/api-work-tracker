@@ -69,7 +69,10 @@ export class ProjectReportEntriesService {
       ganttDate: dto.ganttDate ?? null,
     })
 
-    return this.projectReportEntriesRepository.save(reportEntry)
+    const savedReportEntry = await this.projectReportEntriesRepository.save(reportEntry)
+    await this.refreshProjectNextReportDate(project.id)
+
+    return savedReportEntry
   }
 
   async updateProjectReportEntry(
@@ -120,6 +123,7 @@ export class ProjectReportEntriesService {
     }
 
     await this.projectReportEntriesRepository.save(reportEntry)
+    await this.refreshProjectNextReportDate(projectId)
 
     return this.findReportEntryForProject(projectId, reportId)
   }
@@ -134,6 +138,7 @@ export class ProjectReportEntriesService {
       reportEntry.files.map((file) => this.deletePhysicalFile(file.path)),
     )
     await this.projectReportEntriesRepository.remove(reportEntry)
+    await this.refreshProjectNextReportDate(projectId)
   }
 
   async addProjectReportEntryFile(
@@ -267,6 +272,37 @@ export class ProjectReportEntriesService {
 
   private getCurrentDate(): string {
     return new Date().toISOString().slice(0, 10)
+  }
+
+  private async refreshProjectNextReportDate(projectId: number): Promise<void> {
+    const nextProjectReportDate =
+      await this.getProjectNextReportDate(projectId)
+
+    await this.projectsRepository.update(projectId, { nextProjectReportDate })
+  }
+
+  private async getProjectNextReportDate(
+    projectId: number,
+  ): Promise<string | null> {
+    const reportEntries = await this.projectReportEntriesRepository.find({
+      where: { projectId },
+      select: { nextReportDate: true },
+      order: { nextReportDate: 'ASC' },
+    })
+
+    const today = this.getCurrentDate()
+    const dates = reportEntries
+      .map((reportEntry) => reportEntry.nextReportDate)
+      .filter((date): date is string => Boolean(date))
+
+    const futureDate = dates
+      .filter((date) => date >= today)
+      .sort((left, right) => left.localeCompare(right))[0]
+    const pastDate = dates
+      .filter((date) => date < today)
+      .sort((left, right) => right.localeCompare(left))[0]
+
+    return futureDate ?? pastDate ?? null
   }
 
   private async findReportEntryForProject(projectId: number, reportId: number) {

@@ -25,6 +25,9 @@ export class ReportProject {
   @Column({ type: 'varchar', length: 255 })
   title!: string
 
+  @Column({ name: 'bitrix_project_id', type: 'varchar', length: 64, nullable: true })
+  bitrixProjectId!: string | null
+
   @Column({ name: 'project_amount', type: 'double', nullable: true })
   projectAmount!: number | null
 
@@ -151,5 +154,6 @@ export class ReportProject {
   @OneToMany(() => ProjectReportEntry, (reportEntry) => reportEntry.project)
   reportEntries!: ProjectReportEntry[]
 
-  nextProjectReportDate?: string | null
+  @Column({ name: 'next_project_report_date', type: 'date', nullable: true })
+  nextProjectReportDate!: string | null
 }

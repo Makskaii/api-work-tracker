@@ -6,6 +6,13 @@ import { Employee } from '../employee/entity/employee.entity'
 import { GanttCustomEvent } from '../gantt/entities/gantt-custom-event.entity'
 import { GanttIncidentFile } from '../gantt/entities/gantt-incident-file.entity'
 import { GanttIncident } from '../gantt/entities/gantt-incident.entity'
+import { ProjectGanttEvent } from '../project-reports/entities/project-gantt-event.entity'
+import { ProjectGanttStage } from '../project-reports/entities/project-gantt-stage.entity'
+import { ProjectPayment } from '../project-reports/entities/project-payment.entity'
+import { ProjectReportEntryFile } from '../project-reports/entities/project-report-entry-file.entity'
+import { ProjectReportEntry } from '../project-reports/entities/project-report-entry.entity'
+import { ReportProject } from '../project-reports/entities/project-report-project.entity'
+import { ReportProjectFile } from '../project-reports/entities/report-project-file.entity'
 
 export default new DataSource({
   type: 'mysql',
@@ -21,6 +28,13 @@ export default new DataSource({
     GanttCustomEvent,
     GanttIncident,
     GanttIncidentFile,
+    ReportProject,
+    ReportProjectFile,
+    ProjectReportEntry,
+    ProjectReportEntryFile,
+    ProjectGanttStage,
+    ProjectGanttEvent,
+    ProjectPayment,
   ],
   migrations: [__dirname + '/migrations/**/*{.ts,.js}'],
   synchronize: false,

@@ -1,0 +1,439 @@
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+import { InjectRepository } from '@nestjs/typeorm'
+import { Repository } from 'typeorm'
+import { CreateProjectGanttEventDto } from './dto/create-project-gantt-event.dto'
+import { CreateProjectGanttStageDto } from './dto/create-project-gantt-stage.dto'
+import { UpdateProjectGanttEventDto } from './dto/update-project-gantt-event.dto'
+import { UpdateProjectGanttStageDto } from './dto/update-project-gantt-stage.dto'
+import {
+  ProjectGanttEvent,
+  ProjectGanttEventKind,
+} from './entities/project-gantt-event.entity'
+import {
+  ProjectGanttStage,
+  ProjectGanttStageType,
+} from './entities/project-gantt-stage.entity'
+import { ProjectPayment } from './entities/project-payment.entity'
+
+const DEFAULT_PAYMENTS_STAGE_CODE = 'payments'
+const DEFAULT_PAYMENTS_STAGE_TITLE = 'Оплаты'
+
+const STAGE_TYPE_TITLES: Record<ProjectGanttStageType, string> = {
+  [ProjectGanttStageType.Payments]: DEFAULT_PAYMENTS_STAGE_TITLE,
+  [ProjectGanttStageType.TzWriting]: 'Написание ТЗ',
+  [ProjectGanttStageType.TzSigning]: 'Подписание ТЗ',
+  [ProjectGanttStageType.Development]: 'Разработка',
+  [ProjectGanttStageType.Education]: 'Обучение',
+  [ProjectGanttStageType.Delivery]: 'Сдача',
+  [ProjectGanttStageType.Closing]: 'Закрытие проекта',
+}
+
+const DURATION_STAGE_TYPES = new Set<ProjectGanttStageType>([
+  ProjectGanttStageType.TzWriting,
+  ProjectGanttStageType.Development,
+  ProjectGanttStageType.Education,
+])
+
+@Injectable()
+export class ProjectGanttService {
+  constructor(
+    @InjectRepository(ProjectGanttStage)
+    private readonly stagesRepository: Repository<ProjectGanttStage>,
+    @InjectRepository(ProjectGanttEvent)
+    private readonly eventsRepository: Repository<ProjectGanttEvent>,
+    @InjectRepository(ProjectPayment)
+    private readonly paymentsRepository: Repository<ProjectPayment>,
+  ) {}
+
+  async findProjectStages(projectId: string): Promise<ProjectGanttStage[]> {
+    await this.ensurePaymentsStage(projectId)
+
+    return this.stagesRepository.find({
+      where: { projectId },
+      order: { sortOrder: 'ASC', id: 'ASC' },
+    })
+  }
+
+  async createProjectStage(
+    projectId: string,
+    dto: CreateProjectGanttStageDto,
+  ): Promise<ProjectGanttStage> {
+    const stageType = dto.stageType ?? null
+    this.assertStageTypeAllowedForManualStage(stageType)
+
+    const code = dto.code?.trim()
+      ? this.normalizeCode(dto.code)
+      : await this.createUniqueStageCode(projectId, stageType)
+
+    await this.assertStageCodeAvailable(projectId, code)
+
+    const stage = await this.stagesRepository.save(
+      this.stagesRepository.create({
+        projectId,
+        title: this.getStageTitle(dto.title, stageType, code),
+        code,
+        stageType,
+        sortOrder: dto.sortOrder ?? 0,
+        isDefault: false,
+      }),
+    )
+
+    await this.ensureStageEvent(stage)
+
+    return stage
+  }
+
+  async updateStage(
+    stageId: number,
+    dto: UpdateProjectGanttStageDto,
+  ): Promise<ProjectGanttStage> {
+    const stage = await this.findStageOrFail(stageId)
+
+    if (stage.code === DEFAULT_PAYMENTS_STAGE_CODE && dto.code) {
+      throw new BadRequestException('Нельзя изменить код системного этапа оплат')
+    }
+
+
+    if (dto.stageType === ProjectGanttStageType.Payments) {
+      throw new BadRequestException('Системный этап оплат создаётся автоматически')
+    }
+
+    if (dto.code !== undefined) {
+      const code = this.normalizeCode(dto.code)
+      await this.assertStageCodeAvailable(stage.projectId, code, stage.id)
+      stage.code = code
+    }
+
+    if (dto.stageType !== undefined) {
+      stage.stageType = dto.stageType ?? null
+    }
+
+    if (dto.title !== undefined || dto.stageType !== undefined) {
+      stage.title = this.getStageTitle(dto.title, stage.stageType, stage.code)
+    }
+
+    if (dto.sortOrder !== undefined) {
+      stage.sortOrder = dto.sortOrder ?? 0
+    }
+
+    const savedStage = await this.stagesRepository.save(stage)
+    await this.ensureStageEvent(savedStage)
+
+    return savedStage
+  }
+
+  async deleteStage(stageId: number): Promise<void> {
+    const stage = await this.findStageOrFail(stageId)
+
+    if (stage.code === DEFAULT_PAYMENTS_STAGE_CODE) {
+      throw new BadRequestException('Нельзя удалить системный этап оплат')
+    }
+
+    const paymentsCount = await this.paymentsRepository.count({
+      where: { stageId },
+    })
+
+    if (paymentsCount > 0) {
+      throw new BadRequestException('Нельзя удалить этап со связанными оплатами')
+    }
+
+    await this.eventsRepository.delete({ stageId })
+    await this.stagesRepository.delete(stageId)
+  }
+
+  async findProjectEvents(projectId: string): Promise<ProjectGanttEvent[]> {
+    return this.eventsRepository.find({
+      where: { projectId },
+      relations: { stage: true },
+      order: { sortOrder: 'ASC', id: 'ASC' },
+    })
+  }
+
+  async createProjectEvent(
+    projectId: string,
+    dto: CreateProjectGanttEventDto,
+  ): Promise<ProjectGanttEvent> {
+    await this.assertStageBelongsToProject(dto.stageId, projectId)
+    this.validateEventDates(dto)
+
+    const event = this.eventsRepository.create({
+      projectId,
+      stageId: dto.stageId,
+      title: dto.title.trim(),
+      eventKind: dto.eventKind,
+      planStartDate: dto.planStartDate ?? null,
+      planEndDate: dto.planEndDate ?? null,
+      factStartDate: dto.factStartDate ?? null,
+      factEndDate: dto.factEndDate ?? null,
+      sortOrder: dto.sortOrder ?? 0,
+    })
+
+    return this.eventsRepository.save(event)
+  }
+
+  async updateEvent(
+    eventId: number,
+    dto: UpdateProjectGanttEventDto,
+  ): Promise<ProjectGanttEvent> {
+    const event = await this.findEventOrFail(eventId)
+
+    if (dto.stageId !== undefined) {
+      await this.assertStageBelongsToProject(dto.stageId, event.projectId)
+      event.stageId = dto.stageId
+    }
+
+    const nextEventKind = dto.eventKind ?? event.eventKind
+    this.validateEventDates({
+      eventKind: nextEventKind,
+      planStartDate: dto.planStartDate ?? event.planStartDate,
+      planEndDate: dto.planEndDate ?? event.planEndDate,
+      factStartDate: dto.factStartDate ?? event.factStartDate,
+      factEndDate: dto.factEndDate ?? event.factEndDate,
+    })
+
+    if (dto.title !== undefined) {
+      event.title = dto.title.trim()
+    }
+
+    if (dto.eventKind !== undefined) {
+      event.eventKind = dto.eventKind
+    }
+
+    if (dto.planStartDate !== undefined) {
+      event.planStartDate = dto.planStartDate
+    }
+
+    if (dto.planEndDate !== undefined) {
+      event.planEndDate = dto.planEndDate
+    }
+
+    if (dto.factStartDate !== undefined) {
+      event.factStartDate = dto.factStartDate
+    }
+
+    if (dto.factEndDate !== undefined) {
+      event.factEndDate = dto.factEndDate
+    }
+
+    if (dto.sortOrder !== undefined) {
+      event.sortOrder = dto.sortOrder ?? 0
+    }
+
+    return this.eventsRepository.save(event)
+  }
+
+  async deleteEvent(eventId: number): Promise<void> {
+    await this.findEventOrFail(eventId)
+    await this.eventsRepository.delete(eventId)
+  }
+
+  private async ensurePaymentsStage(projectId: string) {
+    const existingStage = await this.stagesRepository.findOne({
+      where: { projectId, code: DEFAULT_PAYMENTS_STAGE_CODE },
+    })
+
+    if (existingStage) {
+      if (
+        existingStage.title !== DEFAULT_PAYMENTS_STAGE_TITLE ||
+        existingStage.stageType !== ProjectGanttStageType.Payments
+      ) {
+        existingStage.title = DEFAULT_PAYMENTS_STAGE_TITLE
+        existingStage.stageType = ProjectGanttStageType.Payments
+        return this.stagesRepository.save(existingStage)
+      }
+
+      return existingStage
+    }
+
+    return this.stagesRepository.save(
+      this.stagesRepository.create({
+        projectId,
+        title: DEFAULT_PAYMENTS_STAGE_TITLE,
+        code: DEFAULT_PAYMENTS_STAGE_CODE,
+        stageType: ProjectGanttStageType.Payments,
+        sortOrder: 0,
+        isDefault: true,
+      }),
+    )
+  }
+
+  private async ensureStageEvent(stage: ProjectGanttStage) {
+    const eventKind = this.getEventKindByStageType(stage.stageType)
+
+    if (!eventKind) {
+      return
+    }
+
+    const event = await this.eventsRepository.findOne({
+      where: { stageId: stage.id },
+      order: { id: 'ASC' },
+    })
+
+    if (!event) {
+      await this.eventsRepository.save(
+        this.eventsRepository.create({
+          projectId: stage.projectId,
+          stageId: stage.id,
+          title: stage.title,
+          eventKind,
+          planStartDate: null,
+          planEndDate: null,
+          factStartDate: null,
+          factEndDate: null,
+          sortOrder: stage.sortOrder,
+        }),
+      )
+      return
+    }
+
+    event.title = stage.title
+    event.eventKind = eventKind
+    event.sortOrder = stage.sortOrder
+    await this.eventsRepository.save(event)
+  }
+
+  private getEventKindByStageType(stageType: ProjectGanttStageType | null) {
+    if (!stageType || stageType === ProjectGanttStageType.Payments) {
+      return null
+    }
+
+    return DURATION_STAGE_TYPES.has(stageType)
+      ? ProjectGanttEventKind.Duration
+      : ProjectGanttEventKind.OneTime
+  }
+
+  private getStageTitle(
+    title: string | null | undefined,
+    stageType: ProjectGanttStageType | null,
+    fallback: string,
+  ) {
+    const trimmedTitle = title?.trim()
+
+    if (trimmedTitle) {
+      return trimmedTitle
+    }
+
+    return stageType ? STAGE_TYPE_TITLES[stageType] : fallback
+  }
+
+  private assertStageTypeAllowedForManualStage(
+    stageType: ProjectGanttStageType | null,
+  ) {
+    if (stageType === ProjectGanttStageType.Payments) {
+      throw new BadRequestException('Системный этап оплат создаётся автоматически')
+    }
+  }
+
+  private async findStageOrFail(stageId: number) {
+    const stage = await this.stagesRepository.findOne({
+      where: { id: stageId },
+    })
+
+    if (!stage) {
+      throw new NotFoundException('Этап не найден')
+    }
+
+    return stage
+  }
+
+  private async findEventOrFail(eventId: number) {
+    const event = await this.eventsRepository.findOne({
+      where: { id: eventId },
+    })
+
+    if (!event) {
+      throw new NotFoundException('Событие не найдено')
+    }
+
+    return event
+  }
+
+  private async assertStageBelongsToProject(
+    stageId: number,
+    projectId: string,
+  ) {
+    const stage = await this.stagesRepository.findOne({
+      where: { id: stageId },
+    })
+
+    if (!stage || stage.projectId !== projectId) {
+      throw new BadRequestException('Этап не принадлежит проекту')
+    }
+  }
+
+  private async assertStageCodeAvailable(
+    projectId: string,
+    code: string,
+    excludeStageId?: number,
+  ) {
+    const existingStage = await this.stagesRepository.findOne({
+      where: { projectId, code },
+    })
+
+    if (existingStage && existingStage.id !== excludeStageId) {
+      throw new BadRequestException('Этап с таким кодом уже существует')
+    }
+  }
+
+  private async createUniqueStageCode(
+    projectId: string,
+    stageType: ProjectGanttStageType | null,
+  ) {
+    const baseCode = stageType ?? 'stage'
+    let code = baseCode
+    let index = 2
+
+    while (await this.stagesRepository.exists({ where: { projectId, code } })) {
+      code = `${baseCode}-${index}`
+      index += 1
+    }
+
+    return code
+  }
+
+  private normalizeCode(code: string) {
+    const normalizedCode = code.trim()
+
+    if (!normalizedCode) {
+      throw new BadRequestException('Код этапа обязателен')
+    }
+
+    return normalizedCode
+  }
+
+  private validateEventDates({
+    eventKind,
+    planStartDate,
+    planEndDate,
+    factStartDate,
+    factEndDate,
+  }: {
+    eventKind: ProjectGanttEventKind
+    planStartDate?: string | null
+    planEndDate?: string | null
+    factStartDate?: string | null
+    factEndDate?: string | null
+  }) {
+    if (
+      eventKind === ProjectGanttEventKind.Duration &&
+      (planStartDate || planEndDate) &&
+      (!planStartDate || !planEndDate)
+    ) {
+      throw new BadRequestException(
+        'Для события с продолжительностью нужен плановый период',
+      )
+    }
+
+    if (planStartDate && planEndDate && planStartDate > planEndDate) {
+      throw new BadRequestException(
+        'Дата начала плана не может быть позже даты окончания',
+      )
+    }
+
+    if (factStartDate && factEndDate && factStartDate > factEndDate) {
+      throw new BadRequestException(
+        'Дата начала факта не может быть позже даты окончания',
+      )
+    }
+  }
+}

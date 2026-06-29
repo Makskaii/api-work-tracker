@@ -15,7 +15,7 @@ export class ProjectPaymentsService {
     private readonly stagesRepository: Repository<ProjectGanttStage>,
   ) {}
 
-  async findProjectPayments(projectId: string): Promise<ProjectPayment[]> {
+  findProjectPayments(projectId: string): Promise<ProjectPayment[]> {
     return this.paymentsRepository.find({
       where: { projectId },
       relations: { stage: true },
@@ -33,6 +33,7 @@ export class ProjectPaymentsService {
       projectId,
       stageId: dto.stageId,
       status: dto.status,
+      paymentAnchor: dto.paymentAnchor ?? undefined,
       paymentDate: dto.paymentDate ?? null,
       percent: dto.percent ?? null,
       amount: dto.amount ?? null,
@@ -56,6 +57,10 @@ export class ProjectPaymentsService {
 
     if (dto.status !== undefined) {
       payment.status = dto.status
+    }
+
+    if (dto.paymentAnchor !== undefined) {
+      payment.paymentAnchor = dto.paymentAnchor ?? payment.paymentAnchor
     }
 
     if (dto.paymentDate !== undefined) {

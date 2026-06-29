@@ -17,6 +17,11 @@ export enum ProjectPaymentStatus {
   Canceled = 'canceled',
 }
 
+export enum ProjectPaymentAnchor {
+  StageStart = 'stage_start',
+  StageEnd = 'stage_end',
+}
+
 @Entity('project_payments')
 @Index('idx_project_payments_project_id', ['projectId'])
 @Index('idx_project_payments_stage_id', ['stageId'])
@@ -39,6 +44,14 @@ export class ProjectPayment {
 
   @Column({ type: 'enum', enum: ProjectPaymentStatus })
   status!: ProjectPaymentStatus
+
+  @Column({
+    name: 'payment_anchor',
+    type: 'enum',
+    enum: ProjectPaymentAnchor,
+    default: ProjectPaymentAnchor.StageEnd,
+  })
+  paymentAnchor!: ProjectPaymentAnchor
 
   @Column({ name: 'payment_date', type: 'date', nullable: true })
   paymentDate!: string | null

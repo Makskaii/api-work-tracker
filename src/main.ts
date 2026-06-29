@@ -11,6 +11,12 @@ import {
 
 const { FRONTEND_URL } = process.env
 
+const getAllowedOrigins = (value?: string) =>
+  value
+    ?.split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+
 async function bootstrap() {
   const isProduction = isProductionEnvironment(process.env.NODE_ENV, process.env.DEV)
   const app = await NestFactory.create(AppModule, {
@@ -19,7 +25,7 @@ async function bootstrap() {
   })
 
   app.enableCors({
-    origin: FRONTEND_URL as string,
+    origin: getAllowedOrigins(FRONTEND_URL),
   })
 
   const port = Number(process.env.PORT) || 3001

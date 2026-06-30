@@ -14,6 +14,7 @@ export enum ProjectGanttStageType {
   Payments = 'payments',
   TzWriting = 'tz_writing',
   TzSigning = 'tz_signing',
+  Contracting = 'contracting',
   Development = 'development',
   Education = 'education',
   Delivery = 'delivery',

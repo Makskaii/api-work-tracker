@@ -85,6 +85,9 @@ export class ReportProject {
   @Column({ type: 'varchar', length: 255, nullable: true })
   responsible!: string | null
 
+  @Column({ name: 'sales_manager', type: 'varchar', length: 255, nullable: true })
+  salesManager!: string | null
+
   @Column({ type: 'varchar', length: 255, nullable: true })
   analyst!: string | null
 

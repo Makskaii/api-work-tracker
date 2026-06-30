@@ -22,6 +22,7 @@ const STAGE_TYPE_TITLES: Record<ProjectGanttStageType, string> = {
   [ProjectGanttStageType.Payments]: DEFAULT_PAYMENTS_STAGE_TITLE,
   [ProjectGanttStageType.TzWriting]: 'Написание ТЗ',
   [ProjectGanttStageType.TzSigning]: 'Подписание ТЗ',
+  [ProjectGanttStageType.Contracting]: 'Контрактация',
   [ProjectGanttStageType.Development]: 'Разработка',
   [ProjectGanttStageType.Education]: 'Обучение',
   [ProjectGanttStageType.Delivery]: 'Сдача',

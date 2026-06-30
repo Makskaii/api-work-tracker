@@ -50,6 +50,12 @@ export class ProjectGanttStage {
   })
   stageType!: ProjectGanttStageType | null
 
+  @Column({ name: 'depends_on_stage_id', type: 'bigint', unsigned: true, nullable: true })
+  dependsOnStageId!: number | null
+
+  @Column({ name: 'duration_days', type: 'int', unsigned: true, nullable: true })
+  durationDays!: number | null
+
   @Column({ name: 'sort_order', type: 'int', default: 0 })
   sortOrder!: number
 

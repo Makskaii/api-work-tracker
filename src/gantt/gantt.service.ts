@@ -51,7 +51,7 @@ export class GanttService {
     })
   }
 
-  async createProjectEvent(
+  createProjectEvent(
     projectId: string,
     dto: CreateGanttEventDto,
   ): Promise<GanttCustomEvent> {

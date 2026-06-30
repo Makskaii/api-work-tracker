@@ -66,6 +66,10 @@ export class ProjectGanttService {
       : await this.createUniqueStageCode(projectId, stageType)
 
     await this.assertStageCodeAvailable(projectId, code)
+    await this.assertDependsOnStageBelongsToProject(
+      dto.dependsOnStageId,
+      projectId,
+    )
 
     const stage = await this.stagesRepository.save(
       this.stagesRepository.create({
@@ -73,6 +77,8 @@ export class ProjectGanttService {
         title: this.getStageTitle(dto.title, stageType, code),
         code,
         stageType,
+        dependsOnStageId: dto.dependsOnStageId ?? null,
+        durationDays: dto.durationDays ?? null,
         sortOrder: dto.sortOrder ?? 0,
         isDefault: false,
       }),
@@ -108,6 +114,19 @@ export class ProjectGanttService {
       stage.stageType = dto.stageType ?? null
     }
 
+    if (dto.dependsOnStageId !== undefined) {
+      await this.assertDependsOnStageBelongsToProject(
+        dto.dependsOnStageId,
+        stage.projectId,
+        stage.id,
+      )
+      stage.dependsOnStageId = dto.dependsOnStageId ?? null
+    }
+
+    if (dto.durationDays !== undefined) {
+      stage.durationDays = dto.durationDays ?? null
+    }
+
     if (dto.title !== undefined || dto.stageType !== undefined) {
       stage.title = this.getStageTitle(dto.title, stage.stageType, stage.code)
     }
@@ -141,7 +160,7 @@ export class ProjectGanttService {
     await this.stagesRepository.delete(stageId)
   }
 
-  async findProjectEvents(projectId: string): Promise<ProjectGanttEvent[]> {
+  findProjectEvents(projectId: string): Promise<ProjectGanttEvent[]> {
     return this.eventsRepository.find({
       where: { projectId },
       relations: { stage: true },
@@ -359,6 +378,22 @@ export class ProjectGanttService {
     if (!stage || stage.projectId !== projectId) {
       throw new BadRequestException('Этап не принадлежит проекту')
     }
+  }
+
+  private async assertDependsOnStageBelongsToProject(
+    dependsOnStageId: number | null | undefined,
+    projectId: string,
+    currentStageId?: number,
+  ) {
+    if (!dependsOnStageId) {
+      return
+    }
+
+    if (dependsOnStageId === currentStageId) {
+      throw new BadRequestException('Этап не может быть привязан сам к себе')
+    }
+
+    await this.assertStageBelongsToProject(dependsOnStageId, projectId)
   }
 
   private async assertStageCodeAvailable(

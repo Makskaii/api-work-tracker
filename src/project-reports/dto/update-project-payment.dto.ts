@@ -1,6 +1,9 @@
 import { Type } from 'class-transformer'
 import { IsDateString, IsEnum, IsInt, IsNumber, IsOptional, Min } from 'class-validator'
-import { ProjectPaymentStatus } from '../entities/project-payment.entity'
+import {
+  ProjectPaymentAnchor,
+  ProjectPaymentStatus,
+} from '../entities/project-payment.entity'
 
 export class UpdateProjectPaymentDto {
   @IsOptional()
@@ -11,6 +14,10 @@ export class UpdateProjectPaymentDto {
   @IsOptional()
   @IsEnum(ProjectPaymentStatus)
   status?: ProjectPaymentStatus
+
+  @IsOptional()
+  @IsEnum(ProjectPaymentAnchor)
+  paymentAnchor?: ProjectPaymentAnchor | null
 
   @IsOptional()
   @IsDateString()

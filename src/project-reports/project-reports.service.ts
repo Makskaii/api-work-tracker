@@ -14,14 +14,14 @@ export class ProjectReportsService {
     private readonly projectsRepository: Repository<ReportProject>,
   ) {}
 
-  async findProjects(): Promise<ReportProject[]> {
+  findProjects(): Promise<ReportProject[]> {
     return this.projectsRepository.find({
       relations: { files: true },
       order: { id: 'DESC' },
     })
   }
 
-  async createProject(dto: CreateReportProjectDto): Promise<ReportProject> {
+  createProject(dto: CreateReportProjectDto): Promise<ReportProject> {
     const project = this.projectsRepository.create({
       ...dto,
       title: dto.title.trim(),

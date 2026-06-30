@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer'
-import { IsEnum, IsInt, IsOptional, IsString } from 'class-validator'
+import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator'
 import { ProjectGanttStageType } from '../entities/project-gantt-stage.entity'
 
 export class UpdateProjectGanttStageDto {
@@ -14,6 +14,17 @@ export class UpdateProjectGanttStageDto {
   @IsOptional()
   @IsEnum(ProjectGanttStageType)
   stageType?: ProjectGanttStageType | null
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  dependsOnStageId?: number | null
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  durationDays?: number | null
 
   @IsOptional()
   @Type(() => Number)

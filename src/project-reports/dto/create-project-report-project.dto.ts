@@ -94,6 +94,10 @@ export class CreateReportProjectDto {
 
   @IsOptional()
   @IsString()
+  salesManager?: string | null
+
+  @IsOptional()
+  @IsString()
   analyst?: string | null
 
   @IsOptional()

@@ -10,6 +10,7 @@ import {
   ProjectGanttEventKind,
 } from './entities/project-gantt-event.entity'
 import {
+  ProjectGanttDependencyAnchor,
   ProjectGanttStage,
   ProjectGanttStageType,
 } from './entities/project-gantt-stage.entity'
@@ -79,6 +80,9 @@ export class ProjectGanttService {
         code,
         stageType,
         dependsOnStageId: dto.dependsOnStageId ?? null,
+        dependencyAnchor: dto.dependsOnStageId
+          ? (dto.dependencyAnchor ?? ProjectGanttDependencyAnchor.StageEnd)
+          : null,
         durationDays: dto.durationDays ?? null,
         sortOrder: dto.sortOrder ?? 0,
         isDefault: false,
@@ -122,6 +126,14 @@ export class ProjectGanttService {
         stage.id,
       )
       stage.dependsOnStageId = dto.dependsOnStageId ?? null
+    }
+
+    if (dto.dependencyAnchor !== undefined || dto.dependsOnStageId !== undefined) {
+      stage.dependencyAnchor = stage.dependsOnStageId
+        ? (dto.dependencyAnchor ??
+            stage.dependencyAnchor ??
+            ProjectGanttDependencyAnchor.StageEnd)
+        : null
     }
 
     if (dto.durationDays !== undefined) {

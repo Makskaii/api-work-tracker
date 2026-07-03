@@ -1,6 +1,9 @@
 import { Type } from 'class-transformer'
 import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator'
-import { ProjectGanttStageType } from '../entities/project-gantt-stage.entity'
+import {
+  ProjectGanttDependencyAnchor,
+  ProjectGanttStageType,
+} from '../entities/project-gantt-stage.entity'
 
 export class CreateProjectGanttStageDto {
   @IsOptional()
@@ -19,6 +22,10 @@ export class CreateProjectGanttStageDto {
   @Type(() => Number)
   @IsInt()
   dependsOnStageId?: number | null
+
+  @IsOptional()
+  @IsEnum(ProjectGanttDependencyAnchor)
+  dependencyAnchor?: ProjectGanttDependencyAnchor | null
 
   @IsOptional()
   @Type(() => Number)

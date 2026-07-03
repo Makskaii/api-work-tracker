@@ -21,6 +21,11 @@ export enum ProjectGanttStageType {
   Closing = 'closing',
 }
 
+export enum ProjectGanttDependencyAnchor {
+  StageStart = 'stage_start',
+  StageEnd = 'stage_end',
+}
+
 @Entity('project_gantt_stages')
 @Index('idx_project_gantt_stages_project_id', ['projectId'])
 @Index('idx_project_gantt_stages_project_id_code', ['projectId', 'code'], {
@@ -53,6 +58,14 @@ export class ProjectGanttStage {
 
   @Column({ name: 'depends_on_stage_id', type: 'bigint', unsigned: true, nullable: true })
   dependsOnStageId!: number | null
+
+  @Column({
+    name: 'dependency_anchor',
+    type: 'enum',
+    enum: ProjectGanttDependencyAnchor,
+    nullable: true,
+  })
+  dependencyAnchor!: ProjectGanttDependencyAnchor | null
 
   @Column({ name: 'duration_days', type: 'int', unsigned: true, nullable: true })
   durationDays!: number | null

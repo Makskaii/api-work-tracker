@@ -251,12 +251,77 @@ export class ClientsService {
     const events = await this.purchasedHoursEventsRepository.find({
       where: { clientId: id },
       order: {
+        date: 'DESC',
         createdAt: 'DESC',
         id: 'DESC',
       },
     })
 
     return events.map(toClientPurchasedHoursEventResponseDto)
+  }
+
+  removePurchasedHoursEvent(
+    id: number,
+    eventId: number,
+  ): Promise<ClientResponseDto> {
+    return this.dataSource.transaction(async (manager) => {
+      const clientsRepository = manager.getRepository(Client)
+      const purchasedHoursEventsRepository = manager.getRepository(
+        ClientPurchasedHoursEvent,
+      )
+      const client = await clientsRepository.findOne({
+        where: { id },
+        lock: {
+          mode: 'pessimistic_write',
+        },
+      })
+
+      if (!client) {
+        throw new NotFoundException('Client not found')
+      }
+
+      const event = await purchasedHoursEventsRepository.findOne({
+        where: {
+          id: eventId,
+          clientId: id,
+        },
+      })
+
+      if (!event) {
+        throw new NotFoundException('Purchased hours event not found')
+      }
+
+      await purchasedHoursEventsRepository.remove(event)
+
+      const events = await purchasedHoursEventsRepository.find({
+        where: { clientId: id },
+        order: {
+          createdAt: 'ASC',
+          id: 'ASC',
+        },
+      })
+
+      let balance = 0
+
+      for (const item of events) {
+        const hours = this.toNumber(item.hours)
+        balance =
+          item.type === ClientPurchasedHoursEventType.Added
+            ? balance + hours
+            : balance - hours
+        item.balanceAfter = this.roundTime(Math.max(balance, 0))
+      }
+
+      await purchasedHoursEventsRepository.save(events)
+
+      client.purchasedHours = events.length
+        ? this.roundTime(Math.max(balance, 0))
+        : null
+
+      const savedClient = await clientsRepository.save(client)
+
+      return toClientResponseDto(savedClient)
+    })
   }
 
   async getMyCompany(authClient: ClientJwtPayload): Promise<ClientCompanyDto> {
@@ -537,7 +602,12 @@ export class ClientsService {
         clientId: id,
         type,
         hours: changedHours,
+        amount:
+          dto.amount === null || dto.amount === undefined
+            ? null
+            : this.roundTime(dto.amount),
         balanceAfter,
+        date: dto.date ?? null,
         comment,
       })
 

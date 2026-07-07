@@ -24,7 +24,9 @@ export const toClientPurchasedHoursEventResponseDto = (
   clientId: event.clientId,
   type: event.type,
   hours: Number(event.hours),
+  amount: toNullableNumber(event.amount),
   balanceAfter: Number(event.balanceAfter),
+  date: event.date,
   comment: event.comment,
   createdAt: event.createdAt,
 })

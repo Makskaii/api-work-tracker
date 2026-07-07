@@ -36,8 +36,14 @@ export class ClientPurchasedHoursEvent {
   @Column({ type: 'decimal', precision: 8, scale: 2 })
   hours!: number
 
+  @Column({ type: 'decimal', precision: 12, scale: 2, nullable: true })
+  amount!: number | null
+
   @Column({ name: 'balance_after', type: 'decimal', precision: 8, scale: 2 })
   balanceAfter!: number
+
+  @Column({ type: 'date', nullable: true })
+  date!: string | null
 
   @Column({ type: 'text', nullable: true })
   comment!: string | null

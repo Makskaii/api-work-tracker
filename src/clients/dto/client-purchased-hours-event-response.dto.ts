@@ -5,7 +5,9 @@ export class ClientPurchasedHoursEventResponseDto {
   clientId: number
   type: ClientPurchasedHoursEventType
   hours: number
+  amount: number | null
   balanceAfter: number
+  date: string | null
   comment: string | null
   createdAt: Date
 }

@@ -176,6 +176,14 @@ export class ClientsController {
     return this.clientsService.getPurchasedHoursEvents(id)
   }
 
+  @Delete(':id/purchased-hours/events/:eventId')
+  removePurchasedHoursEvent(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('eventId', ParseIntPipe) eventId: number,
+  ): Promise<ClientResponseDto> {
+    return this.clientsService.removePurchasedHoursEvent(id, eventId)
+  }
+
   @Delete(':id')
   @HttpCode(204)
   remove(@Param('id', ParseIntPipe) id: number): Promise<void> {

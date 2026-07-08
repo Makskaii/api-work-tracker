@@ -85,17 +85,32 @@ export class ReportProject {
   @Column({ type: 'varchar', length: 255, nullable: true })
   responsible!: string | null
 
+  @Column({ name: 'responsible_id', type: 'varchar', length: 64, nullable: true })
+  responsibleId!: string | null
+
   @Column({ name: 'sales_manager', type: 'varchar', length: 255, nullable: true })
   salesManager!: string | null
+
+  @Column({ name: 'sales_manager_id', type: 'varchar', length: 64, nullable: true })
+  salesManagerId!: string | null
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   analyst!: string | null
 
+  @Column({ name: 'analyst_id', type: 'varchar', length: 64, nullable: true })
+  analystId!: string | null
+
   @Column({ name: 'development_team', type: 'text', nullable: true })
   developmentTeam!: string | null
 
+  @Column({ name: 'development_team_ids', type: 'text', nullable: true })
+  developmentTeamIds!: string | null
+
   @Column({ type: 'varchar', length: 255, nullable: true })
   qa!: string | null
+
+  @Column({ name: 'qa_id', type: 'varchar', length: 64, nullable: true })
+  qaId!: string | null
 
   @Column({ name: 'tz_start_date', type: 'date', nullable: true })
   tzStartDate!: string | null

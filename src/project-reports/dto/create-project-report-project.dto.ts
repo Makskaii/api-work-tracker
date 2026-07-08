@@ -94,7 +94,15 @@ export class CreateReportProjectDto {
 
   @IsOptional()
   @IsString()
+  responsibleId?: string | null
+
+  @IsOptional()
+  @IsString()
   salesManager?: string | null
+
+  @IsOptional()
+  @IsString()
+  salesManagerId?: string | null
 
   @IsOptional()
   @IsString()
@@ -102,11 +110,23 @@ export class CreateReportProjectDto {
 
   @IsOptional()
   @IsString()
+  analystId?: string | null
+
+  @IsOptional()
+  @IsString()
   developmentTeam?: string | null
 
   @IsOptional()
   @IsString()
+  developmentTeamIds?: string | null
+
+  @IsOptional()
+  @IsString()
   qa?: string | null
+
+  @IsOptional()
+  @IsString()
+  qaId?: string | null
 
   @IsOptional()
   @IsDateString()

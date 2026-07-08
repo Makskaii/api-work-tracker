@@ -167,6 +167,7 @@ const mapProjectFields = (
 
   return {
     analyst: getUserTitle(bitrixProject[ProjectCodes.analytic]),
+    analystId: toText(bitrixProject[ProjectCodes.analytic]),
     bitrixProjectId: bitrixProjectId || null,
     clientCompany: companyTitleById.get(companyId) ?? null,
     closeDate: toDateOrNull(bitrixProject[ProjectGanttCodes.ganttCloseDate]),
@@ -184,6 +185,7 @@ const mapProjectFields = (
       bitrixProject[ProjectGanttCodes.ganttDevPlanStart],
     ),
     developmentTeam: toText(bitrixProject[ProjectCodes.devs]),
+    developmentTeamIds: toText(bitrixProject[ProjectCodes.devs]),
     developmentWeeks: toNumberOrNull(
       bitrixProject[ProjectGanttCodes.ganttDevWeeks],
     ),
@@ -205,7 +207,9 @@ const mapProjectFields = (
     projectAmount: toNumberOrNull(bitrixProject[ProjectCodes.projectAmount]),
     projectType: ReportProjectType.Waterfall,
     qa: getUserTitle(bitrixProject[ProjectCodes.qa]),
+    qaId: toText(bitrixProject[ProjectCodes.qa]),
     responsible: getUserTitle(bitrixProject.assignedById),
+    responsibleId: toText(bitrixProject.assignedById),
     summaryFactCompletionDate: toDateOrNull(
       bitrixProject[ProjectGanttCodes.ganttCloseDate],
     ),

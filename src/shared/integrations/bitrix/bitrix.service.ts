@@ -459,6 +459,55 @@ export class BitrixService {
       }))
   }
 
+  async listAllUsers(): Promise<UserInfo[]> {
+    const users: BitrixUserResponse[] = []
+    let start = 0
+    let hasNextPage = true
+
+    while (hasNextPage) {
+      const response = await firstValueFrom(
+        this.httpService.get<BitrixUsersApiResponse>(Endpoints.users, {
+          params: {
+            start,
+            select: [
+              'ID',
+              'NAME',
+              'LAST_NAME',
+              'SECOND_NAME',
+              'TITLE',
+              'UF_DEPARTMENT',
+              'WORK_POSITION',
+              'PERSONAL_PHOTO',
+            ],
+          },
+        }),
+      )
+
+      users.push(...(response.data.result ?? []))
+
+      const next = Number(response.data.next)
+
+      if (Number.isFinite(next) && next > 0) {
+        start = next
+      } else {
+        hasNextPage = false
+      }
+    }
+
+    return users
+      .filter((user) => Boolean(user.ID))
+      .map((user) => ({
+        id: String(user.ID),
+        title: this.buildUserTitle(user),
+        name: user.NAME,
+        lastName: user.LAST_NAME,
+        secondName: user.SECOND_NAME,
+        department: user.UF_DEPARTMENT,
+        workPosition: user.WORK_POSITION,
+        photo: user.PERSONAL_PHOTO,
+      }))
+  }
+
   private buildUserTitle(user: BitrixUserResponse): string {
     if (user.TITLE?.trim()) {
       return user.TITLE.trim()

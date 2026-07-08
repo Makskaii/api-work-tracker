@@ -24,6 +24,7 @@ export type UserInfo = {
 
 export type BitrixUsersApiResponse = {
   result: BitrixUserResponse[]
+  next?: number | string
 }
 
 export interface BitrixClients {

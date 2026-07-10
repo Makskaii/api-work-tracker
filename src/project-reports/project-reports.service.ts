@@ -2,9 +2,10 @@ import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { Repository } from 'typeorm'
+import { In, Repository } from 'typeorm'
 import { CreateReportProjectDto } from './dto/create-project-report-project.dto'
 import { UpdateReportProjectDto } from './dto/update-project-report-project.dto'
+import { ProjectReportEntry } from './entities/project-report-entry.entity'
 import { ReportProject } from './entities/project-report-project.entity'
 
 @Injectable()
@@ -12,13 +13,53 @@ export class ProjectReportsService {
   constructor(
     @InjectRepository(ReportProject)
     private readonly projectsRepository: Repository<ReportProject>,
+    @InjectRepository(ProjectReportEntry)
+    private readonly projectReportEntriesRepository: Repository<ProjectReportEntry>,
   ) {}
 
-  findProjects(): Promise<ReportProject[]> {
-    return this.projectsRepository.find({
+  async findProjects(): Promise<ReportProject[]> {
+    const projects = await this.projectsRepository.find({
       relations: { files: true },
       order: { id: 'DESC' },
     })
+
+    if (!projects.length) {
+      return projects
+    }
+
+    const projectIds = projects.map((project) => project.id)
+
+    const reportEntries = await this.projectReportEntriesRepository.find({
+      where: {
+        projectId: In(projectIds),
+      },
+      select: {
+        id: true,
+        projectId: true,
+        reportDate: true,
+        createdAt: true,
+        nextReportDate: true,
+      },
+      order: {
+        reportDate: 'DESC',
+        createdAt: 'DESC',
+        id: 'DESC',
+      },
+    })
+
+    const latestReportByProjectId = new Map<number, ProjectReportEntry>()
+
+    reportEntries.forEach((reportEntry) => {
+      if (!latestReportByProjectId.has(reportEntry.projectId)) {
+        latestReportByProjectId.set(reportEntry.projectId, reportEntry)
+      }
+    })
+
+    return projects.map((project) => ({
+      ...project,
+      nextProjectReportDate:
+        latestReportByProjectId.get(project.id)?.nextReportDate ?? null,
+    }))
   }
 
   createProject(dto: CreateReportProjectDto): Promise<ReportProject> {

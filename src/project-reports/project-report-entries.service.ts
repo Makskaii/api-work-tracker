@@ -11,11 +11,11 @@ import { InjectRepository } from '@nestjs/typeorm'
 import { Repository } from 'typeorm'
 import { CreateProjectReportEntryDto } from './dto/create-project-report-entry.dto'
 import { UpdateProjectReportEntryDto } from './dto/update-project-report-entry.dto'
-import { ProjectReportEntryFile } from './entities/project-report-entry-file.entity'
 import {
   ProjectReportEntry,
   ProjectReportEntrySource,
 } from './entities/project-report-entry.entity'
+import { ProjectReportEntryFile } from './entities/project-report-entry-file.entity'
 import { ReportProject } from './entities/project-report-project.entity'
 import type { ReportProjectUploadedFile } from './project-reports.types'
 
@@ -30,7 +30,9 @@ export class ProjectReportEntriesService {
     private readonly projectReportEntryFilesRepository: Repository<ProjectReportEntryFile>,
   ) {}
 
-  async findProjectReportEntries(projectId: number): Promise<ProjectReportEntry[]> {
+  async findProjectReportEntries(
+    projectId: number,
+  ): Promise<ProjectReportEntry[]> {
     await this.findProjectOrFail(projectId)
 
     return this.projectReportEntriesRepository.find({
@@ -69,7 +71,8 @@ export class ProjectReportEntriesService {
       ganttDate: dto.ganttDate ?? null,
     })
 
-    const savedReportEntry = await this.projectReportEntriesRepository.save(reportEntry)
+    const savedReportEntry =
+      await this.projectReportEntriesRepository.save(reportEntry)
     await this.refreshProjectNextReportDate(project.id)
 
     return savedReportEntry
@@ -80,7 +83,10 @@ export class ProjectReportEntriesService {
     reportId: number,
     dto: UpdateProjectReportEntryDto,
   ): Promise<ProjectReportEntry> {
-    const reportEntry = await this.findReportEntryForProject(projectId, reportId)
+    const reportEntry = await this.findReportEntryForProject(
+      projectId,
+      reportId,
+    )
 
     if (dto.authorName !== undefined) {
       const authorName = dto.authorName.trim()
@@ -132,7 +138,10 @@ export class ProjectReportEntriesService {
     projectId: number,
     reportId: number,
   ): Promise<void> {
-    const reportEntry = await this.findReportEntryForProject(projectId, reportId)
+    const reportEntry = await this.findReportEntryForProject(
+      projectId,
+      reportId,
+    )
 
     await Promise.all(
       reportEntry.files.map((file) => this.deletePhysicalFile(file.path)),
@@ -146,7 +155,10 @@ export class ProjectReportEntriesService {
     reportId: number,
     file: ReportProjectUploadedFile | undefined,
   ): Promise<ProjectReportEntryFile> {
-    const reportEntry = await this.findReportEntryForProject(projectId, reportId)
+    const reportEntry = await this.findReportEntryForProject(
+      projectId,
+      reportId,
+    )
 
     if (!file?.buffer) {
       throw new BadRequestException('Invalid uploaded file')
@@ -275,8 +287,7 @@ export class ProjectReportEntriesService {
   }
 
   private async refreshProjectNextReportDate(projectId: number): Promise<void> {
-    const nextProjectReportDate =
-      await this.getProjectNextReportDate(projectId)
+    const nextProjectReportDate = await this.getProjectNextReportDate(projectId)
 
     await this.projectsRepository.update(projectId, { nextProjectReportDate })
   }
@@ -284,25 +295,24 @@ export class ProjectReportEntriesService {
   private async getProjectNextReportDate(
     projectId: number,
   ): Promise<string | null> {
-    const reportEntries = await this.projectReportEntriesRepository.find({
-      where: { projectId },
-      select: { nextReportDate: true },
-      order: { nextReportDate: 'ASC' },
-    })
+    const latestReportEntry = await this.projectReportEntriesRepository.findOne(
+      {
+        where: { projectId },
+        select: {
+          id: true,
+          reportDate: true,
+          createdAt: true,
+          nextReportDate: true,
+        },
+        order: {
+          reportDate: 'DESC',
+          createdAt: 'DESC',
+          id: 'DESC',
+        },
+      },
+    )
 
-    const today = this.getCurrentDate()
-    const dates = reportEntries
-      .map((reportEntry) => reportEntry.nextReportDate)
-      .filter((date): date is string => Boolean(date))
-
-    const futureDate = dates
-      .filter((date) => date >= today)
-      .sort((left, right) => left.localeCompare(right))[0]
-    const pastDate = dates
-      .filter((date) => date < today)
-      .sort((left, right) => right.localeCompare(left))[0]
-
-    return futureDate ?? pastDate ?? null
+    return latestReportEntry?.nextReportDate ?? null
   }
 
   private async findReportEntryForProject(projectId: number, reportId: number) {

@@ -1,5 +1,5 @@
 ﻿import { Type } from 'class-transformer'
-import { IsDateString, IsEnum, IsNumber, IsOptional, IsString } from 'class-validator'
+import { IsDateString, IsEnum, IsNumber, IsOptional, IsString, Min } from 'class-validator'
 import { ReportProjectType } from '../entities/project-report-project.entity'
 
 export class CreateReportProjectDto {
@@ -34,6 +34,48 @@ export class CreateReportProjectDto {
   @Type(() => Number)
   @IsNumber()
   summaryFactHours?: number | null
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  tzPurchasedHours?: number | null
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  tzPlanHours?: number | null
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  tzFactHours?: number | null
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  developmentPurchasedHours?: number | null
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  educationPurchasedHours?: number | null
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  educationPlanHours?: number | null
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  educationFactHours?: number | null
 
   @IsOptional()
   @Type(() => Number)

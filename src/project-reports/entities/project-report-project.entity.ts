@@ -43,6 +43,27 @@ export class ReportProject {
   @Column({ name: 'summary_fact_hours', type: 'double', nullable: true })
   summaryFactHours!: number | null
 
+  @Column({ name: 'tz_purchased_hours', type: 'double', nullable: true })
+  tzPurchasedHours!: number | null
+
+  @Column({ name: 'tz_plan_hours', type: 'double', nullable: true })
+  tzPlanHours!: number | null
+
+  @Column({ name: 'tz_fact_hours', type: 'double', nullable: true })
+  tzFactHours!: number | null
+
+  @Column({ name: 'development_purchased_hours', type: 'double', nullable: true })
+  developmentPurchasedHours!: number | null
+
+  @Column({ name: 'education_purchased_hours', type: 'double', nullable: true })
+  educationPurchasedHours!: number | null
+
+  @Column({ name: 'education_plan_hours', type: 'double', nullable: true })
+  educationPlanHours!: number | null
+
+  @Column({ name: 'education_fact_hours', type: 'double', nullable: true })
+  educationFactHours!: number | null
+
   @Column({ name: 'summary_loss_hours', type: 'double', nullable: true })
   summaryLossHours!: number | null
 

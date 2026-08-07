@@ -14,6 +14,7 @@ import { ProjectReportsModule } from './project-reports/project-reports.module'
 import { RedisModule } from './shared/redis/redis.module'
 import { SprintsModule } from './sprints/sprints.module'
 import { UserSprintsModule } from './user-sprints/user-sprints.module'
+import { StorageModule } from './storage/storage.module'
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { UserSprintsModule } from './user-sprints/user-sprints.module'
     EmployeeModule,
     GanttModule,
     ProjectReportsModule,
+    StorageModule,
   ],
   controllers: [AppController],
   providers: [AppService],

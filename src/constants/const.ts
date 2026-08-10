@@ -19,6 +19,7 @@ export enum TaskCodes {
 }
 
 export enum ProjectCodes {
+
   pm = 'ASSIGNED_BY_ID',
   analytic = 'ufCrm20_1777028495',
   devs = 'ufCrm20_1777028537',
@@ -221,3 +222,6 @@ export const reportSelectFields = [
   `parentId${EntityTypeIds.tasks}`,
 ]
 
+
+export const STORAGE_CLEANUP_THRESHOLD = 90;
+export const STORAGE_CLEANUP_DRY_RUN = true;

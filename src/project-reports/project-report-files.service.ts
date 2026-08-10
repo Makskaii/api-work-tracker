@@ -40,14 +40,6 @@ export class ProjectReportFilesService {
       throw new BadRequestException('Invalid uploaded file')
     }
 
-    const existingFile = project.files.find(
-      (item) => item.fileKind === fileKind,
-    )
-
-    if (existingFile) {
-      await this.deleteProjectFile(projectId, existingFile.id)
-    }
-
     const storagePath = await this.saveProjectFile(project.id, fileKind, file)
     const projectFile = this.projectFilesRepository.create({
       projectId: project.id,

@@ -1,11 +1,20 @@
 import { Type } from 'class-transformer'
-import { IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator'
+import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator'
 import {
   ProjectGanttDependencyAnchor,
+  ProjectGanttGroupStatus,
   ProjectGanttStageType,
 } from '../entities/project-gantt-stage.entity'
 
 export class UpdateProjectGanttStageDto {
+  @IsOptional()
+  @IsBoolean()
+  isGroup?: boolean
+
+  @IsOptional()
+  @IsEnum(ProjectGanttGroupStatus)
+  groupStatus?: ProjectGanttGroupStatus
+
   @IsOptional()
   @IsString()
   title?: string

@@ -3,6 +3,8 @@ import {
   CreateDateColumn,
   Entity,
   Index,
+  JoinColumn,
+  ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
@@ -26,6 +28,13 @@ export enum ProjectGanttDependencyAnchor {
   StageEnd = 'stage_end',
 }
 
+export enum ProjectGanttGroupStatus {
+  NotStarted = 'not_started',
+  InProgress = 'in_progress',
+  Inactive = 'inactive',
+  Completed = 'completed',
+}
+
 @Entity('project_gantt_stages')
 @Index('idx_project_gantt_stages_project_id', ['projectId'])
 @Index('idx_project_gantt_stages_project_id_code', ['projectId', 'code'], {
@@ -35,6 +44,7 @@ export enum ProjectGanttDependencyAnchor {
   'projectId',
   'stageType',
 ])
+@Index('idx_project_gantt_stages_parent_stage_id', ['parentStageId'])
 export class ProjectGanttStage {
   @PrimaryGeneratedColumn({ type: 'bigint', unsigned: true })
   id!: number
@@ -75,6 +85,30 @@ export class ProjectGanttStage {
 
   @Column({ name: 'is_default', type: 'boolean', default: false })
   isDefault!: boolean
+
+  @Column({ name: 'is_group', type: 'boolean', default: false })
+  isGroup!: boolean
+
+  @Column({
+    name: 'group_status',
+    type: 'enum',
+    enum: ProjectGanttGroupStatus,
+    default: ProjectGanttGroupStatus.NotStarted,
+  })
+  groupStatus!: ProjectGanttGroupStatus
+
+  @Column({ name: 'parent_stage_id', type: 'bigint', unsigned: true, nullable: true })
+  parentStageId!: number | null
+
+  @ManyToOne(() => ProjectGanttStage, (stage) => stage.children, {
+    onDelete: 'SET NULL',
+    nullable: true,
+  })
+  @JoinColumn({ name: 'parent_stage_id' })
+  parentStage!: ProjectGanttStage | null
+
+  @OneToMany(() => ProjectGanttStage, (stage) => stage.parentStage)
+  children!: ProjectGanttStage[]
 
   @OneToMany(() => ProjectGanttEvent, (event) => event.stage)
   events!: ProjectGanttEvent[]

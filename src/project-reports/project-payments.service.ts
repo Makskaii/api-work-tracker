@@ -114,5 +114,8 @@ export class ProjectPaymentsService {
     if (!stage || stage.projectId !== projectId) {
       throw new BadRequestException('Этап не принадлежит проекту')
     }
+    if (stage?.isGroup) {
+      throw new BadRequestException('Payments cannot be linked to a parent stage')
+    }
   }
 }

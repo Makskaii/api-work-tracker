@@ -63,7 +63,7 @@ export class ProjectGanttService {
   ): Promise<ProjectGanttStage> {
     const isGroup = dto.isGroup ?? false
     this.assertGroupFields(dto, isGroup)
-    const stageType = isGroup ? null : (dto.stageType ?? null)
+    const stageType = dto.stageType ?? null
     this.assertStageTypeAllowedForManualStage(stageType)
 
     const code = dto.code?.trim()
@@ -202,6 +202,7 @@ export class ProjectGanttService {
   moveStageParent(
     stageId: number,
     parentStageId: number,
+    beforeStageId?: number | null,
   ): Promise<ProjectGanttStage[]> {
     return this.stagesRepository.manager.transaction(async (manager) => {
       const stagesRepository = manager.getRepository(ProjectGanttStage)
@@ -220,45 +221,49 @@ export class ProjectGanttService {
         where: { projectId: stage.projectId },
         order: { sortOrder: 'ASC', id: 'ASC' },
       })
-      const regularStages = projectStages.filter(
-        (item) => !item.isGroup && item.code !== DEFAULT_PAYMENTS_STAGE_CODE,
+      const oldParentStageId = stage.parentStageId
+      const sortStages = (stages: ProjectGanttStage[]) =>
+        stages.sort((left, right) =>
+          left.sortOrder === right.sortOrder
+            ? left.id - right.id
+            : left.sortOrder - right.sortOrder,
+        )
+      const oldChildren = sortStages(
+        projectStages.filter(
+          (item) =>
+            item.parentStageId === oldParentStageId && item.id !== stage.id,
+        ),
       )
-      const stageIds = new Set(regularStages.map((item) => item.id))
-      const relatedIds = new Set<number>([stageId])
-      let hasNewStages = true
+      const targetChildren = sortStages(projectStages.filter(
+        (item) => item.parentStageId === parent.id && item.id !== stage.id,
+      ))
 
-      while (hasNewStages) {
-        hasNewStages = false
-        for (const item of regularStages) {
-          if (
-            (item.dependsOnStageId && relatedIds.has(item.dependsOnStageId)) ||
-            (relatedIds.has(item.id) && item.dependsOnStageId && stageIds.has(item.dependsOnStageId))
-          ) {
-            if (!relatedIds.has(item.id)) {
-              relatedIds.add(item.id)
-              hasNewStages = true
-            }
-            if (item.dependsOnStageId && !relatedIds.has(item.dependsOnStageId)) {
-              relatedIds.add(item.dependsOnStageId)
-              hasNewStages = true
-            }
-          }
+      if (beforeStageId !== undefined && beforeStageId !== null) {
+        const beforeIndex = targetChildren.findIndex(
+          (item) => item.id === beforeStageId,
+        )
+
+        if (beforeIndex === -1) {
+          throw new BadRequestException('beforeStageId must be a child of the target parent stage')
         }
+
+        targetChildren.splice(beforeIndex, 0, stage)
+      } else {
+        targetChildren.push(stage)
       }
 
-      const movedStages = regularStages.filter((item) => relatedIds.has(item.id))
-      const existingChildren = projectStages.filter(
-        (item) => item.parentStageId === parent.id && !relatedIds.has(item.id),
-      )
-      let sortOrder = Math.max(-1, ...existingChildren.map((item) => item.sortOrder)) + 1
+      stage.parentStageId = parent.id
+      const stagesToSave = parent.id === oldParentStageId ? targetChildren : [
+        ...oldChildren,
+        ...targetChildren,
+      ]
 
-      for (const item of movedStages) {
-        item.parentStageId = parent.id
-        item.sortOrder = sortOrder
-        sortOrder += 1
+      for (const [index, item] of stagesToSave.entries()) {
+        item.sortOrder = index
       }
 
-      return stagesRepository.save(movedStages)
+      await stagesRepository.save(stagesToSave)
+      return [stage]
     })
   }
 
@@ -522,13 +527,12 @@ export class ProjectGanttService {
   ) {
     if (isGroup) {
       if (
-        dto.stageType != null ||
         dto.dependsOnStageId != null ||
         dto.dependencyAnchor != null ||
         dto.durationDays != null ||
         ('parentStageId' in dto && dto.parentStageId != null)
       ) {
-        throw new BadRequestException('A parent stage cannot have type, dependency, duration, or parent')
+        throw new BadRequestException('A parent stage cannot have dependency, duration, or parent')
       }
       return
     }

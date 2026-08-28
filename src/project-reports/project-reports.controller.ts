@@ -256,7 +256,11 @@ export class ProjectReportsController {
     @Param('stageId', ParseIntPipe) stageId: number,
     @Body() dto: MoveProjectGanttStageParentDto,
   ): Promise<ProjectGanttStage[]> {
-    return this.projectGanttService.moveStageParent(stageId, dto.parentStageId)
+    return this.projectGanttService.moveStageParent(
+      stageId,
+      dto.parentStageId,
+      dto.beforeStageId,
+    )
   }
 
   @Delete('gantt/stages/:stageId')

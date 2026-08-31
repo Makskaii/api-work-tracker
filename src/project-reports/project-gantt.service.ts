@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { Repository } from 'typeorm'
 import { CreateProjectGanttEventDto } from './dto/create-project-gantt-event.dto'
@@ -72,7 +76,10 @@ export class ProjectGanttService {
 
     await this.assertStageCodeAvailable(projectId, code)
     if (!isGroup) {
-      await this.assertDependsOnStageBelongsToProject(dto.dependsOnStageId, projectId)
+      await this.assertDependsOnStageBelongsToProject(
+        dto.dependsOnStageId,
+        projectId,
+      )
       await this.assertParentStage(dto.parentStageId, projectId)
     }
 
@@ -83,9 +90,10 @@ export class ProjectGanttService {
         code,
         stageType,
         dependsOnStageId: isGroup ? null : (dto.dependsOnStageId ?? null),
-        dependencyAnchor: !isGroup && dto.dependsOnStageId
-          ? (dto.dependencyAnchor ?? ProjectGanttDependencyAnchor.StageEnd)
-          : null,
+        dependencyAnchor:
+          !isGroup && dto.dependsOnStageId
+            ? (dto.dependencyAnchor ?? ProjectGanttDependencyAnchor.StageEnd)
+            : null,
         durationDays: isGroup ? null : (dto.durationDays ?? null),
         sortOrder: dto.sortOrder ?? 0,
         isDefault: false,
@@ -107,18 +115,23 @@ export class ProjectGanttService {
     const stage = await this.findStageOrFail(stageId)
 
     if (dto.isGroup !== undefined && dto.isGroup !== stage.isGroup) {
-      throw new BadRequestException('Stage type cannot be changed between group and regular')
+      throw new BadRequestException(
+        'Stage type cannot be changed between group and regular',
+      )
     }
 
     this.assertGroupFields(dto, stage.isGroup)
 
     if (stage.code === DEFAULT_PAYMENTS_STAGE_CODE && dto.code) {
-      throw new BadRequestException('Нельзя изменить код системного этапа оплат')
+      throw new BadRequestException(
+        'Нельзя изменить код системного этапа оплат',
+      )
     }
 
-
     if (dto.stageType === ProjectGanttStageType.Payments) {
-      throw new BadRequestException('Системный этап оплат создаётся автоматически')
+      throw new BadRequestException(
+        'Системный этап оплат создаётся автоматически',
+      )
     }
 
     if (dto.code !== undefined) {
@@ -144,11 +157,14 @@ export class ProjectGanttService {
       stage.dependsOnStageId = dto.dependsOnStageId ?? null
     }
 
-    if (dto.dependencyAnchor !== undefined || dto.dependsOnStageId !== undefined) {
+    if (
+      dto.dependencyAnchor !== undefined ||
+      dto.dependsOnStageId !== undefined
+    ) {
       stage.dependencyAnchor = stage.dependsOnStageId
         ? (dto.dependencyAnchor ??
-            stage.dependencyAnchor ??
-            ProjectGanttDependencyAnchor.StageEnd)
+          stage.dependencyAnchor ??
+          ProjectGanttDependencyAnchor.StageEnd)
         : null
     }
 
@@ -183,7 +199,9 @@ export class ProjectGanttService {
       })
 
       if (childrenCount > 0) {
-        throw new BadRequestException('Cannot delete a parent stage while it has child stages')
+        throw new BadRequestException(
+          'Cannot delete a parent stage while it has child stages',
+        )
       }
     }
 
@@ -192,7 +210,9 @@ export class ProjectGanttService {
     })
 
     if (paymentsCount > 0) {
-      throw new BadRequestException('Нельзя удалить этап со связанными оплатами')
+      throw new BadRequestException(
+        'Нельзя удалить этап со связанными оплатами',
+      )
     }
 
     await this.eventsRepository.delete({ stageId })
@@ -208,62 +228,68 @@ export class ProjectGanttService {
       const stagesRepository = manager.getRepository(ProjectGanttStage)
       const stage = await stagesRepository.findOneBy({ id: stageId })
 
-      if (!stage || stage.isGroup || stage.code === DEFAULT_PAYMENTS_STAGE_CODE) {
-        throw new BadRequestException('Only a regular non-payment stage can be moved')
+      if (
+        !stage ||
+        stage.isGroup ||
+        stage.code === DEFAULT_PAYMENTS_STAGE_CODE
+      ) {
+        throw new BadRequestException(
+          'Only a regular non-payment stage can be moved',
+        )
       }
 
       const parent = await stagesRepository.findOneBy({ id: parentStageId })
       if (!parent || !parent.isGroup || parent.projectId !== stage.projectId) {
-        throw new BadRequestException('Target parent stage must be a group in the same project')
+        throw new BadRequestException(
+          'Target parent stage must be a group in the same project',
+        )
       }
 
-      const projectStages = await stagesRepository.find({
+      const allStages = await stagesRepository.find({
         where: { projectId: stage.projectId },
         order: { sortOrder: 'ASC', id: 'ASC' },
       })
-      const oldParentStageId = stage.parentStageId
-      const sortStages = (stages: ProjectGanttStage[]) =>
-        stages.sort((left, right) =>
-          left.sortOrder === right.sortOrder
-            ? left.id - right.id
-            : left.sortOrder - right.sortOrder,
-        )
-      const oldChildren = sortStages(
-        projectStages.filter(
-          (item) =>
-            item.parentStageId === oldParentStageId && item.id !== stage.id,
-        ),
+
+      const stagesWithoutCurrent = allStages.filter(
+        (s) => String(s.id) !== String(stage.id),
       )
-      const targetChildren = sortStages(projectStages.filter(
-        (item) => item.parentStageId === parent.id && item.id !== stage.id,
-      ))
-
-      if (beforeStageId !== undefined && beforeStageId !== null) {
-        const beforeIndex = targetChildren.findIndex(
-          (item) => item.id === beforeStageId,
-        )
-
-        if (beforeIndex === -1) {
-          throw new BadRequestException('beforeStageId must be a child of the target parent stage')
-        }
-
-        targetChildren.splice(beforeIndex, 0, stage)
-      } else {
-        targetChildren.push(stage)
-      }
 
       stage.parentStageId = parent.id
-      const stagesToSave = parent.id === oldParentStageId ? targetChildren : [
-        ...oldChildren,
-        ...targetChildren,
-      ]
 
-      for (const [index, item] of stagesToSave.entries()) {
-        item.sortOrder = index
+      let targetIndex = -1
+      if (beforeStageId !== undefined && beforeStageId !== null) {
+        const beforeIndex = stagesWithoutCurrent.findIndex(
+          (s) =>
+            String(s.id) === String(beforeStageId) &&
+            String(s.parentStageId) === String(parent.id),
+        )
+        if (beforeIndex !== -1) {
+          targetIndex = beforeIndex
+        } else {
+          throw new BadRequestException(
+            'beforeStageId must be a child of the target parent stage',
+          )
+        }
       }
 
-      await stagesRepository.save(stagesToSave)
-      return [stage]
+      if (targetIndex === -1) {
+        const lastChildIndex = stagesWithoutCurrent.findLastIndex(
+          (s) => String(s.parentStageId) === String(parent.id),
+        )
+        targetIndex =
+          lastChildIndex !== -1
+            ? lastChildIndex + 1
+            : stagesWithoutCurrent.findIndex(
+                  (s) => String(s.id) === String(parent.id),
+                ) + 1
+      }
+
+      stagesWithoutCurrent.splice(targetIndex, 0, stage)
+
+      stagesWithoutCurrent.forEach((s, idx) => (s.sortOrder = idx))
+
+      await stagesRepository.save(stagesWithoutCurrent)
+      return stagesWithoutCurrent
     })
   }
 
@@ -304,7 +330,10 @@ export class ProjectGanttService {
     const event = await this.findEventOrFail(eventId)
 
     if (dto.stageId !== undefined) {
-      await this.assertRegularStageBelongsToProject(dto.stageId, event.projectId)
+      await this.assertRegularStageBelongsToProject(
+        dto.stageId,
+        event.projectId,
+      )
       event.stageId = dto.stageId
     }
 
@@ -451,7 +480,9 @@ export class ProjectGanttService {
     stageType: ProjectGanttStageType | null,
   ) {
     if (stageType === ProjectGanttStageType.Payments) {
-      throw new BadRequestException('Системный этап оплат создаётся автоматически')
+      throw new BadRequestException(
+        'Системный этап оплат создаётся автоматически',
+      )
     }
   }
 
@@ -502,7 +533,9 @@ export class ProjectGanttService {
     const stage = await this.findStageOrFail(stageId)
 
     if (stage.projectId !== projectId || stage.isGroup) {
-      throw new BadRequestException('Stage must be a regular stage in the same project')
+      throw new BadRequestException(
+        'Stage must be a regular stage in the same project',
+      )
     }
   }
 
@@ -517,7 +550,9 @@ export class ProjectGanttService {
     const parent = await this.findStageOrFail(parentStageId)
 
     if (!parent.isGroup || parent.projectId !== projectId) {
-      throw new BadRequestException('Parent stage must be a group in the same project')
+      throw new BadRequestException(
+        'Parent stage must be a group in the same project',
+      )
     }
   }
 
@@ -532,13 +567,17 @@ export class ProjectGanttService {
         dto.durationDays != null ||
         ('parentStageId' in dto && dto.parentStageId != null)
       ) {
-        throw new BadRequestException('A parent stage cannot have dependency, duration, or parent')
+        throw new BadRequestException(
+          'A parent stage cannot have dependency, duration, or parent',
+        )
       }
       return
     }
 
     if (dto.groupStatus !== undefined) {
-      throw new BadRequestException('Group status can be changed only for a parent stage')
+      throw new BadRequestException(
+        'Group status can be changed only for a parent stage',
+      )
     }
   }
 

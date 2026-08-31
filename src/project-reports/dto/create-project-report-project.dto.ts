@@ -1,6 +1,9 @@
 ﻿import { Type } from 'class-transformer'
 import { IsDateString, IsEnum, IsNumber, IsOptional, IsString, Min } from 'class-validator'
-import { ReportProjectType } from '../entities/project-report-project.entity'
+import {
+  ReportProjectStatus,
+  ReportProjectType,
+} from '../entities/project-report-project.entity'
 
 export class CreateReportProjectDto {
   @IsString()
@@ -93,6 +96,10 @@ export class CreateReportProjectDto {
   @IsOptional()
   @IsEnum(ReportProjectType)
   projectType?: ReportProjectType
+
+  @IsOptional()
+  @IsEnum(ReportProjectStatus)
+  projectStatus?: ReportProjectStatus | null
 
   @IsOptional()
   @IsString()

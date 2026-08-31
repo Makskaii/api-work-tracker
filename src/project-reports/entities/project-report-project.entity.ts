@@ -16,6 +16,13 @@ export enum ReportProjectType {
   Support = 'support',
 }
 
+export enum ReportProjectStatus {
+  NotStarted = 'not_started',
+  InProgress = 'in_progress',
+  Inactive = 'inactive',
+  Completed = 'completed',
+}
+
 @Entity('project_report_projects')
 @Index('idx_project_report_projects_project_type', ['projectType'])
 export class ReportProject {
@@ -75,6 +82,15 @@ export class ReportProject {
 
   @Column({ name: 'project_type', type: 'enum', enum: ReportProjectType, default: ReportProjectType.None })
   projectType!: ReportProjectType
+
+  @Column({
+    name: 'project_status',
+    type: 'enum',
+    enum: ReportProjectStatus,
+    nullable: true,
+    default: ReportProjectStatus.NotStarted,
+  })
+  projectStatus!: ReportProjectStatus | null
 
   @Column({ name: 'project_goal', type: 'text', nullable: true })
   projectGoal!: string | null

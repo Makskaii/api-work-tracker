@@ -1,56 +1,91 @@
-# Project Name
+# Work Tracker API
 
-Backend для сбора и агрегации статистики по сотрудникам, проектам и спринтам.  
-Локально проект запускается через **NestJS**, а база данных поднимается в **Docker**.
-
----
+Backend на NestJS для сбора и агрегации рабочей статистики.
 
 ## Требования
 
-Перед запуском убедитесь, что установлены:
-
-- [Node.js](https://nodejs.org/) 20+
+- Node.js 20+
 - npm
-- [Docker](https://www.docker.com/)
-- Docker Compose
+- Docker Desktop с включённым Docker Engine
 
----
-
-## Стек
-
-- NestJS
-- MySQL 
-- Docker
-- TypeORM
-
----
-
-## Запуск проекта локально
+## Локальный запуск
 
 ### 1. Клонировать репозиторий
 
 ```bash
 git clone <repo_url>
-cd <project_folder>
-
+cd work-tracker-api
 ```
-### 2. Создать .env
-.env.example .env
 
-### 3. Пример переменных:
+### 2. Установить зависимости
+
+```bash
+npm install
+```
+
+### 3. Настроить переменные окружения
+
+Создайте файл `.env` на основе `.env.example`:
+
+```bash
+cp .env.example .env
+```
+
+Проверьте основные параметры подключения:
+
+```env
 PORT=3000
-
 DB_HOST=localhost
 DB_PORT=3306
 DB_NAME=analytics_db
 DB_USER=app_user
 DB_PASSWORD=app_pass
+```
 
+### 4. Запустить Docker Desktop
 
+Откройте Docker Desktop и дождитесь состояния **Docker Engine running**. Без запущенного Docker Desktop контейнеры MySQL и Redis не поднимутся.
 
-### 4.Собрать докер контейнер для бд
+### 5. Запустить MySQL и Redis
 
-### 5. Поднять базу локально
+Из корня проекта выполните:
 
 ```bash
-docker start mysql-local
+npm run docker:dev
+```
+
+Команда запускает контейнеры `mysql-local-2` (порт `3306`) и `redis-local` (порт `6379`). Проверить их состояние можно так:
+
+```bash
+docker compose -f docker/dev/docker-compose.yml ps
+```
+
+### 6. Запустить миграции
+
+```bash
+npm run migration:run
+```
+
+### 7. Запустить приложение в режиме разработки
+
+```bash
+npm run start:dev
+```
+
+После запуска API доступен по адресу `http://localhost:3000` (или по порту из `.env`).
+
+## Остановка Docker-контейнеров
+
+```bash
+npm run docker:dev:down
+```
+
+Команда останавливает контейнеры, но сохраняет данные в Docker volumes.
+
+## Полезные команды
+
+```bash
+npm run build       # собрать приложение
+npm run lint        # проверить код
+npm run test        # запустить тесты
+```

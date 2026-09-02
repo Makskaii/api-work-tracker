@@ -19,6 +19,7 @@ import type { Response } from 'express'
 import { REPORT_PROJECT_MAX_FILE_SIZE } from 'src/constants/const'
 import { CreateProjectGanttEventDto } from './dto/create-project-gantt-event.dto'
 import { CreateProjectGanttStageDto } from './dto/create-project-gantt-stage.dto'
+import { MoveProjectGanttStageParentDto } from './dto/move-project-gantt-stage-parent.dto'
 import { CreateProjectPaymentDto } from './dto/create-project-payment.dto'
 import { CreateProjectReportEntryDto } from './dto/create-project-report-entry.dto'
 import { CreateReportProjectDto } from './dto/create-project-report-project.dto'
@@ -248,6 +249,18 @@ export class ProjectReportsController {
     @Body() dto: UpdateProjectGanttStageDto,
   ): Promise<ProjectGanttStage> {
     return this.projectGanttService.updateStage(stageId, dto)
+  }
+
+  @Patch('gantt/stages/:stageId/parent')
+  moveStageParent(
+    @Param('stageId', ParseIntPipe) stageId: number,
+    @Body() dto: MoveProjectGanttStageParentDto,
+  ): Promise<ProjectGanttStage[]> {
+    return this.projectGanttService.moveStageParent(
+      stageId,
+      dto.parentStageId,
+      dto.beforeStageId,
+    )
   }
 
   @Delete('gantt/stages/:stageId')

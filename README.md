@@ -82,6 +82,11 @@ npm run docker:dev:down
 
 Команда останавливает контейнеры, но сохраняет данные в Docker volumes.
 
+### Импорт проектов для отчётов
+
+```bash
+npm run import:report-projects
+
 ## Полезные команды
 
 ```bash

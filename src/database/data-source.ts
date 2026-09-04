@@ -13,6 +13,9 @@ import { ProjectReportEntryFile } from '../project-reports/entities/project-repo
 import { ProjectReportEntry } from '../project-reports/entities/project-report-entry.entity'
 import { ReportProject } from '../project-reports/entities/project-report-project.entity'
 import { ReportProjectFile } from '../project-reports/entities/report-project-file.entity'
+import { SupportHoursConsumption } from '../support-hours/entities/support-hours-consumption.entity'
+import { SupportHoursPackage } from '../support-hours/entities/support-hours-package.entity'
+import { SupportHoursReport } from '../support-hours/entities/support-hours-report.entity'
 
 export default new DataSource({
   type: 'mysql',
@@ -35,6 +38,9 @@ export default new DataSource({
     ProjectGanttStage,
     ProjectGanttEvent,
     ProjectPayment,
+    SupportHoursPackage,
+    SupportHoursReport,
+    SupportHoursConsumption,
   ],
   migrations: [__dirname + '/migrations/**/*{.ts,.js}'],
   synchronize: false,

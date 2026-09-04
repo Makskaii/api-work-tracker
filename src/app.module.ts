@@ -15,6 +15,7 @@ import { RedisModule } from './shared/redis/redis.module'
 import { SprintsModule } from './sprints/sprints.module'
 import { UserSprintsModule } from './user-sprints/user-sprints.module'
 import { StorageModule } from './storage/storage.module'
+import { SupportHoursPackagesModule } from './support-hours/support-hours-packages.module'
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { StorageModule } from './storage/storage.module'
     GanttModule,
     ProjectReportsModule,
     StorageModule,
+    SupportHoursPackagesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

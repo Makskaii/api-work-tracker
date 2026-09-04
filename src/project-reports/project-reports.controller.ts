@@ -9,6 +9,7 @@
   ParseIntPipe,
   Patch,
   Post,
+  Query,
   Res,
   StreamableFile,
   UploadedFile,
@@ -23,6 +24,7 @@ import { MoveProjectGanttStageParentDto } from './dto/move-project-gantt-stage-p
 import { CreateProjectPaymentDto } from './dto/create-project-payment.dto'
 import { CreateProjectReportEntryDto } from './dto/create-project-report-entry.dto'
 import { CreateReportProjectDto } from './dto/create-project-report-project.dto'
+import { ProjectReportsPlanQueryDto } from './dto/project-reports-plan-query.dto'
 import { UpdateProjectGanttEventDto } from './dto/update-project-gantt-event.dto'
 import { UpdateProjectGanttStageDto } from './dto/update-project-gantt-stage.dto'
 import { UpdateProjectPaymentDto } from './dto/update-project-payment.dto'
@@ -55,6 +57,11 @@ export class ProjectReportsController {
   @Get('projects')
   findProjects(): Promise<ReportProject[]> {
     return this.projectReportsService.findProjects()
+  }
+
+  @Get('projects-plan')
+  findProjectsPlan(@Query() query: ProjectReportsPlanQueryDto) {
+    return this.projectReportsService.findProjectsPlan(query)
   }
 
   @Post('projects')

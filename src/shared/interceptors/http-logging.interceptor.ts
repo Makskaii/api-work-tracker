@@ -36,16 +36,17 @@ export class HttpLoggingInterceptor implements NestInterceptor {
     const requestId = this.getRequestId(request)
 
     const { method, originalUrl, ip, body, query, params } = request
+    const safeOriginalUrl = this.sanitizeUrl(originalUrl)
 
     response.setHeader('x-request-id', requestId)
 
     if (this.isProduction) {
       this.logger.log(
-        `[REQ] requestId=${requestId} ${method} ${originalUrl} ip=${ip}`,
+        `[REQ] requestId=${requestId} ${method} ${safeOriginalUrl} ip=${ip}`,
       )
     } else {
       this.logger.debug(
-        `[REQ] requestId=${requestId} ${method} ${originalUrl} ip=${ip} query=${this.stringifySafe(query)} params=${this.stringifySafe(params)} body=${this.stringifySafe(body)}`,
+        `[REQ] requestId=${requestId} ${method} ${safeOriginalUrl} ip=${ip} query=${this.stringifySafe(query)} params=${this.stringifySafe(params)} body=${this.stringifySafe(body)}`,
       )
       this.logger.verbose(
         `[REQ HEADERS] requestId=${requestId} headers=${this.stringifySafe(request.headers)}`,
@@ -55,7 +56,7 @@ export class HttpLoggingInterceptor implements NestInterceptor {
     return next.handle().pipe(
       tap(() => {
         const ms = Date.now() - now
-        const message = `[RES] requestId=${requestId} ${method} ${originalUrl} status=${response.statusCode} +${ms}ms`
+        const message = `[RES] requestId=${requestId} ${method} ${safeOriginalUrl} status=${response.statusCode} +${ms}ms`
 
         if (response.statusCode >= 400) {
           this.logger.warn(message)
@@ -68,7 +69,7 @@ export class HttpLoggingInterceptor implements NestInterceptor {
         const ms = Date.now() - now
         const statusCode = this.getStatusCode(error, response)
         const message = error instanceof Error ? error.message : 'Unknown error'
-        const logMessage = `[ERR] requestId=${requestId} ${method} ${originalUrl} status=${statusCode} +${ms}ms message=${message}`
+        const logMessage = `[ERR] requestId=${requestId} ${method} ${safeOriginalUrl} status=${statusCode} +${ms}ms message=${message}`
 
         if (statusCode >= 500) {
           this.logger.error(logMessage)
@@ -115,6 +116,16 @@ export class HttpLoggingInterceptor implements NestInterceptor {
     } catch {
       return '[UNSERIALIZABLE]'
     }
+  }
+
+  private sanitizeUrl(url: string): string {
+    const [path, rawQuery] = url.split('?', 2)
+    if (!rawQuery) return url
+    const query = new URLSearchParams(rawQuery)
+    query.forEach((_, key) => {
+      if (this.isSensitiveKey(key)) query.set(key, '[HIDDEN]')
+    })
+    return `${path}?${query.toString()}`
   }
 
   private sanitizeValue(value: unknown): unknown {

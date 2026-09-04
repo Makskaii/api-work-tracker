@@ -1,0 +1,199 @@
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common'
+import { InjectRepository } from '@nestjs/typeorm'
+import { DataSource, In, MoreThanOrEqual, Repository } from 'typeorm'
+import { DailyReportCodes, EntityTypeIds } from '../constants/const'
+import { ReportProject, ReportProjectType } from '../project-reports/entities/project-report-project.entity'
+import { BitrixService } from '../shared/integrations/bitrix/bitrix.service'
+import { CreateSupportHoursPackageDto } from './dto/create-support-hours-package.dto'
+import { UpdateSupportHoursPackageDto } from './dto/update-support-hours-package.dto'
+import { SupportHoursConsumption } from './entities/support-hours-consumption.entity'
+import { SupportHoursPackage } from './entities/support-hours-package.entity'
+import { SupportHoursReport } from './entities/support-hours-report.entity'
+import { allocateSupportHours } from './support-hours-allocation'
+
+const SUPPORT_FLAG = 'ufCrm11_1776177558677'
+const PROJECT_TYPE = 'ufCrm20_1781683772'
+const SUPPORT_PROJECT_TYPE = '410'
+const WINDOW_MS = 48 * 60 * 60 * 1000
+
+type BitrixSupportReport = {
+  id: string | number
+  title?: string
+  begindate?: string
+  createdTime?: string
+  lastActivityTime?: string
+  [DailyReportCodes.title]?: string | null
+  [DailyReportCodes.timeSpent]?: string | number | null
+  [DailyReportCodes.parentproject]?: string | number | null
+  [SUPPORT_FLAG]?: string | number | boolean | null
+}
+
+type BitrixProject = {
+  [PROJECT_TYPE]?: string | string[] | number | null
+}
+
+@Injectable()
+export class SupportHoursPackagesService {
+  private readonly logger = new Logger(SupportHoursPackagesService.name)
+
+  constructor(
+    @InjectRepository(ReportProject) private readonly projectsRepository: Repository<ReportProject>,
+    @InjectRepository(SupportHoursPackage) private readonly packagesRepository: Repository<SupportHoursPackage>,
+    @InjectRepository(SupportHoursReport) private readonly reportsRepository: Repository<SupportHoursReport>,
+    @InjectRepository(SupportHoursConsumption) private readonly consumptionsRepository: Repository<SupportHoursConsumption>,
+    private readonly dataSource: DataSource,
+    private readonly bitrixService: BitrixService,
+  ) {}
+
+  async findAll() {
+    const packages = await this.packagesRepository.find({
+      relations: { project: true, consumptions: { report: true } },
+      order: { purchaseDate: 'ASC', id: 'ASC' },
+    })
+    const byProject = new Map<number, SupportHoursPackage[]>()
+    packages.forEach((item) => byProject.set(item.projectId, [...(byProject.get(item.projectId) ?? []), item]))
+
+    return Array.from(byProject.values()).map((projectPackages) => {
+      const purchasedHours = projectPackages.reduce((total, item) => total + this.toNumber(item.purchasedHours), 0)
+      const consumedHours = projectPackages.reduce((total, item) => total + item.consumptions.reduce((sum, consumption) => sum + this.toNumber(consumption.hours), 0), 0)
+      const remainingHours = this.round(purchasedHours - consumedHours)
+      const lastConsumption = projectPackages.flatMap((item) => item.consumptions).toSorted((first, second) => second.report.reportDate.getTime() - first.report.reportDate.getTime()).at(0)
+      const state = remainingHours < 0 ? 'overdue' : remainingHours === 0 ? 'empty' : remainingHours <= purchasedHours * 0.1 ? 'ending' : 'active'
+
+      return {
+        project: projectPackages[0].project,
+        purchasedHours: this.round(purchasedHours),
+        consumedHours: this.round(consumedHours),
+        remainingHours,
+        state,
+        lastChargeAt: lastConsumption?.report.reportDate ?? null,
+        packages: projectPackages.map((item) => ({
+          ...item,
+          remainingHours: this.round(this.toNumber(item.purchasedHours) - item.consumptions.reduce((sum, consumption) => sum + this.toNumber(consumption.hours), 0)),
+        })),
+      }
+    })
+  }
+
+  async create(dto: CreateSupportHoursPackageDto) {
+    const project = await this.findSupportProject(dto.projectId)
+    const item = await this.packagesRepository.save(this.packagesRepository.create({
+      projectId: project.id,
+      purchasedHours: this.round(dto.purchasedHours),
+      purchaseDate: dto.purchaseDate,
+      amount: dto.amount == null ? null : this.round(dto.amount),
+      comment: dto.comment?.trim() || null,
+    }))
+    await this.reallocateProject(project.id)
+    return item
+  }
+
+  async update(id: number, dto: UpdateSupportHoursPackageDto) {
+    const item = await this.packagesRepository.findOne({ where: { id } })
+    if (!item) throw new NotFoundException('Support hours package not found')
+    if (dto.purchasedHours !== undefined) item.purchasedHours = this.round(dto.purchasedHours)
+    if (dto.purchaseDate !== undefined) item.purchaseDate = dto.purchaseDate
+    if (dto.amount !== undefined) item.amount = dto.amount == null ? null : this.round(dto.amount)
+    if (dto.comment !== undefined) item.comment = dto.comment?.trim() || null
+    const saved = await this.packagesRepository.save(item)
+    await this.reallocateProject(item.projectId)
+    return saved
+  }
+
+  async remove(id: number): Promise<void> {
+    const item = await this.packagesRepository.findOne({ where: { id } })
+    if (!item) throw new NotFoundException('Support hours package not found')
+    await this.packagesRepository.remove(item)
+    await this.reallocateProject(item.projectId)
+  }
+
+  async sync() {
+    const since = new Date(Date.now() - WINDOW_MS)
+    const reports = await this.bitrixService.listAllItems<BitrixSupportReport>({
+      entityTypeId: EntityTypeIds.reports,
+      filter: { [`>=lastActivityTime`]: since.toISOString(), [SUPPORT_FLAG]: 'Y' },
+      select: ['id', 'title', 'begindate', 'createdTime', 'lastActivityTime', DailyReportCodes.title, DailyReportCodes.timeSpent, DailyReportCodes.parentproject, SUPPORT_FLAG],
+    })
+    const projectIds = new Set<number>()
+
+    for (const report of reports) {
+      const projectId = await this.saveEligibleReport(report)
+      if (projectId) projectIds.add(projectId)
+    }
+
+    const cached = await this.reportsRepository.find({ where: { lastActivityAt: MoreThanOrEqual(since) } })
+    for (const cachedReport of cached) {
+      try {
+        const report = await this.bitrixService.getItem<BitrixSupportReport>({ entityTypeId: EntityTypeIds.reports, id: Number(cachedReport.bitrixReportId) })
+        if (!report || !(await this.saveEligibleReport(report))) {
+          await this.reportsRepository.remove(cachedReport)
+          projectIds.add(cachedReport.projectId)
+        }
+      } catch (error) {
+        this.logger.warn(`Unable to recheck Bitrix report ${cachedReport.bitrixReportId}`)
+      }
+    }
+
+    await Promise.all(Array.from(projectIds).map((projectId) => this.reallocateProject(projectId)))
+    return { processedReports: reports.length, synchronizedAt: new Date().toISOString() }
+  }
+
+  private async saveEligibleReport(report: BitrixSupportReport): Promise<number | null> {
+    const bitrixProjectId = String(report[DailyReportCodes.parentproject] ?? '')
+    const hours = this.toNumber(report[DailyReportCodes.timeSpent])
+    if (!this.isChecked(report[SUPPORT_FLAG]) || !bitrixProjectId || hours <= 0) return null
+    const bitrixProject = await this.bitrixService.getItem<BitrixProject>({ entityTypeId: EntityTypeIds.projects, id: Number(bitrixProjectId) })
+    if (!this.isSupportProject(bitrixProject?.[PROJECT_TYPE])) return null
+    const project = await this.projectsRepository.findOne({ where: { bitrixProjectId, projectType: ReportProjectType.Support } })
+    if (!project) return null
+    const reportDate = this.toDate(report.begindate ?? report.createdTime)
+    const lastActivityAt = this.toDate(report.lastActivityTime ?? report.createdTime)
+    if (!reportDate || !lastActivityAt) return null
+
+    const bitrixReportId = String(report.id)
+    const existing = await this.reportsRepository.findOne({ where: { bitrixReportId } })
+    const entity = existing ?? this.reportsRepository.create({ bitrixReportId, projectId: project.id })
+    entity.projectId = project.id
+    entity.hours = this.round(hours)
+    entity.reportDate = reportDate
+    entity.lastActivityAt = lastActivityAt
+    entity.reportTitle = report.title?.trim() || null
+    entity.reportDescription = report[DailyReportCodes.title]?.trim() || null
+    await this.reportsRepository.save(entity)
+    return project.id
+  }
+
+  private async reallocateProject(projectId: number): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const packagesRepository = manager.getRepository(SupportHoursPackage)
+      const reportsRepository = manager.getRepository(SupportHoursReport)
+      const consumptionsRepository = manager.getRepository(SupportHoursConsumption)
+      const packages = await packagesRepository.find({ where: { projectId }, order: { purchaseDate: 'ASC', id: 'ASC' } })
+      if (!packages.length) return
+      await consumptionsRepository.delete({ packageId: In(packages.map((item) => item.id)) })
+      const reports = await reportsRepository.find({ where: { projectId }, order: { reportDate: 'ASC', id: 'ASC' } })
+      const consumed = new Map<number, number>()
+      const rows: SupportHoursConsumption[] = []
+      for (const report of reports) {
+        const allocations = allocateSupportHours(packages.map((item) => ({ id: item.id, purchasedHours: this.toNumber(item.purchasedHours), consumedHours: consumed.get(item.id) ?? 0 })), this.toNumber(report.hours))
+        allocations.forEach((allocation) => {
+          consumed.set(allocation.packageId, (consumed.get(allocation.packageId) ?? 0) + allocation.hours)
+          rows.push(consumptionsRepository.create({ reportId: report.id, packageId: allocation.packageId, hours: this.round(allocation.hours) }))
+        })
+      }
+      if (rows.length) await consumptionsRepository.save(rows)
+    })
+  }
+
+  private async findSupportProject(id: number) {
+    const project = await this.projectsRepository.findOne({ where: { id, projectType: ReportProjectType.Support } })
+    if (!project) throw new BadRequestException('Support project not found')
+    return project
+  }
+
+  private isChecked(value: unknown): boolean { return value === true || value === 1 || value === '1' || value === 'Y' }
+  private isSupportProject(value: unknown): boolean { return Array.isArray(value) ? value.map(String).includes(SUPPORT_PROJECT_TYPE) : String(value ?? '') === SUPPORT_PROJECT_TYPE }
+  private toDate(value: string | undefined): Date | null { const date = value ? new Date(value) : null; return date && Number.isFinite(date.getTime()) ? date : null }
+  private toNumber(value: unknown): number { const valueAsNumber = Number(String(value ?? '').replace(',', '.')); return Number.isFinite(valueAsNumber) ? valueAsNumber : 0 }
+  private round(value: number): number { return Math.round(value * 100) / 100 }
+}

@@ -12,6 +12,16 @@ export class SupportHoursPackagesController {
     return this.service.findAll()
   }
 
+  @Get('projects')
+  findSupportProjects() {
+    return this.service.findSupportProjects()
+  }
+
+  @Post('projects/sync')
+  syncSupportProjects() {
+    return this.service.syncSupportProjects()
+  }
+
   @Post()
   create(@Body() dto: CreateSupportHoursPackageDto) {
     return this.service.create(dto)

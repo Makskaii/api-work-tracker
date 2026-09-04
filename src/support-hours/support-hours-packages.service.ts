@@ -15,6 +15,7 @@ const SUPPORT_FLAG = 'ufCrm11_1776177558677'
 const PROJECT_TYPE = 'ufCrm20_1781683772'
 const SUPPORT_PROJECT_TYPE = '410'
 const WINDOW_MS = 48 * 60 * 60 * 1000
+const PROJECTS_SYNC_TTL_MS = 5 * 60 * 1000
 
 type BitrixSupportReport = {
   id: string | number
@@ -29,12 +30,16 @@ type BitrixSupportReport = {
 }
 
 type BitrixProject = {
+  id: string | number
+  title?: string
   [PROJECT_TYPE]?: string | string[] | number | null
 }
 
 @Injectable()
 export class SupportHoursPackagesService {
   private readonly logger = new Logger(SupportHoursPackagesService.name)
+  private supportProjectsSyncPromise: Promise<{ created: number; updated: number }> | null = null
+  private supportProjectsLastSyncAt = 0
 
   constructor(
     @InjectRepository(ReportProject) private readonly projectsRepository: Repository<ReportProject>,
@@ -73,6 +78,25 @@ export class SupportHoursPackagesService {
         })),
       }
     })
+  }
+
+  async findSupportProjects() {
+    return this.projectsRepository.find({
+      where: { projectType: ReportProjectType.Support },
+      order: { title: 'ASC', id: 'ASC' },
+    })
+  }
+
+  async syncSupportProjects() {
+    if (Date.now() - this.supportProjectsLastSyncAt < PROJECTS_SYNC_TTL_MS) {
+      return { created: 0, updated: 0 }
+    }
+    if (!this.supportProjectsSyncPromise) {
+      this.supportProjectsSyncPromise = this.performSupportProjectsSync().finally(() => {
+        this.supportProjectsSyncPromise = null
+      })
+    }
+    return this.supportProjectsSyncPromise
   }
 
   async create(dto: CreateSupportHoursPackageDto) {
@@ -144,7 +168,7 @@ export class SupportHoursPackagesService {
     if (!this.isChecked(report[SUPPORT_FLAG]) || !bitrixProjectId || hours <= 0) return null
     const bitrixProject = await this.bitrixService.getItem<BitrixProject>({ entityTypeId: EntityTypeIds.projects, id: Number(bitrixProjectId) })
     if (!this.isSupportProject(bitrixProject?.[PROJECT_TYPE])) return null
-    const project = await this.projectsRepository.findOne({ where: { bitrixProjectId, projectType: ReportProjectType.Support } })
+    const project = await this.upsertSupportProject(bitrixProject)
     if (!project) return null
     const reportDate = this.toDate(report.begindate ?? report.createdTime)
     const lastActivityAt = this.toDate(report.lastActivityTime ?? report.createdTime)
@@ -161,6 +185,58 @@ export class SupportHoursPackagesService {
     entity.reportDescription = report[DailyReportCodes.title]?.trim() || null
     await this.reportsRepository.save(entity)
     return project.id
+  }
+
+  private async performSupportProjectsSync() {
+    const bitrixProjects = await this.bitrixService.listAllItems<BitrixProject>({
+      entityTypeId: EntityTypeIds.projects,
+      filter: { [PROJECT_TYPE]: SUPPORT_PROJECT_TYPE },
+      select: ['id', 'title', PROJECT_TYPE],
+    })
+    let created = 0
+    let updated = 0
+
+    for (const bitrixProject of bitrixProjects) {
+      const project = await this.projectsRepository.findOne({ where: { bitrixProjectId: String(bitrixProject.id) } })
+      const title = bitrixProject.title?.trim() || project?.title || `Проект ${bitrixProject.id}`
+      if (!project) {
+        await this.projectsRepository.save(this.projectsRepository.create({
+          bitrixProjectId: String(bitrixProject.id),
+          title,
+          projectType: ReportProjectType.Support,
+        }))
+        created += 1
+        continue
+      }
+      if (project.title !== title || project.projectType !== ReportProjectType.Support) {
+        project.title = title
+        project.projectType = ReportProjectType.Support
+        await this.projectsRepository.save(project)
+        updated += 1
+      }
+    }
+
+    this.supportProjectsLastSyncAt = Date.now()
+    return { created, updated }
+  }
+
+  private async upsertSupportProject(bitrixProject: BitrixProject) {
+    const bitrixProjectId = String(bitrixProject.id)
+    const existing = await this.projectsRepository.findOne({ where: { bitrixProjectId } })
+    const title = bitrixProject.title?.trim() || existing?.title || `Проект ${bitrixProjectId}`
+    if (existing) {
+      if (existing.title !== title || existing.projectType !== ReportProjectType.Support) {
+        existing.title = title
+        existing.projectType = ReportProjectType.Support
+        return this.projectsRepository.save(existing)
+      }
+      return existing
+    }
+    return this.projectsRepository.save(this.projectsRepository.create({
+      bitrixProjectId,
+      title,
+      projectType: ReportProjectType.Support,
+    }))
   }
 
   private async reallocateProject(projectId: number): Promise<void> {

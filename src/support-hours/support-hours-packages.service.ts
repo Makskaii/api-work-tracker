@@ -167,7 +167,7 @@ export class SupportHoursPackagesService {
     const hours = this.toNumber(report[DailyReportCodes.timeSpent])
     if (!this.isChecked(report[SUPPORT_FLAG]) || !bitrixProjectId || hours <= 0) return null
     const bitrixProject = await this.bitrixService.getItem<BitrixProject>({ entityTypeId: EntityTypeIds.projects, id: Number(bitrixProjectId) })
-    if (!this.isSupportProject(bitrixProject?.[PROJECT_TYPE])) return null
+    if (!bitrixProject || !this.isSupportProject(bitrixProject[PROJECT_TYPE])) return null
     const project = await this.upsertSupportProject(bitrixProject)
     if (!project) return null
     const reportDate = this.toDate(report.begindate ?? report.createdTime)

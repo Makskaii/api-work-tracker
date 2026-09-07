@@ -17,6 +17,7 @@ const PROJECT_TYPE = 'ufCrm20_1781683772'
 const SUPPORT_PROJECT_TYPE = '410'
 const WINDOW_MS = 48 * 60 * 60 * 1000
 const PROJECTS_SYNC_TTL_MS = 5 * 60 * 1000
+const REPORT_ACTIVITY_IBLOCK_ID = 25
 
 type BitrixSupportReport = {
   id: string | number
@@ -25,6 +26,8 @@ type BitrixSupportReport = {
   createdTime?: string
   lastActivityTime?: string
   assignedById?: string | number | null
+  [DailyReportCodes.company]?: string | number | null
+  [DailyReportCodes.activityType]?: string | number | null
   [DailyReportCodes.title]?: string | null
   [DailyReportCodes.timeSpent]?: string | number | null
   [DailyReportCodes.parentId]?: string | number | null
@@ -234,6 +237,21 @@ export class SupportHoursPackagesService {
       : null
     entity.bitrixResponsibleId = bitrixResponsibleId || null
     entity.responsibleName = responsible?.title?.trim() || null
+    const bitrixCompanyId = String(report[DailyReportCodes.company] ?? '').trim()
+    const bitrixActivityId = String(report[DailyReportCodes.activityType] ?? '').trim()
+    const [company, activityTitle] = await Promise.all([
+      Number.isFinite(Number(bitrixCompanyId))
+        ? this.bitrixService.getCompany<{ TITLE?: string }>(Number(bitrixCompanyId))
+        : Promise.resolve(null),
+      Number.isFinite(Number(bitrixActivityId))
+        ? this.bitrixService.getListElementTitle(REPORT_ACTIVITY_IBLOCK_ID, Number(bitrixActivityId))
+        : Promise.resolve(null),
+    ])
+    entity.bitrixCompanyId = bitrixCompanyId || null
+    entity.companyName = company?.TITLE?.trim() || null
+    entity.projectTitle = project.title?.trim() || null
+    entity.bitrixActivityId = bitrixActivityId || null
+    entity.activityTitle = activityTitle
     await this.reportsRepository.save(entity)
     return project.id
   }

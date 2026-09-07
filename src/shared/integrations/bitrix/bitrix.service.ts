@@ -235,6 +235,28 @@ export class BitrixService {
     }
   }
 
+  async getListElementTitle(iblockId: number, id: number): Promise<string | null> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(Endpoints.lists, {
+          IBLOCK_TYPE_ID: 'lists',
+          IBLOCK_ID: iblockId,
+          FILTER: { ID: id },
+        }),
+      )
+
+      if (response.data?.error) {
+        throw new BadGatewayException(response.data.error_description)
+      }
+
+      const result = response.data?.result
+      const item = Array.isArray(result) ? result.at(0) : result
+      return item?.NAME?.trim() || null
+    } catch (error) {
+      throw new BadGatewayException(this.getBitrixErrorMessage(error))
+    }
+  }
+
   async listAllItems<T>(params: {
     entityTypeId: number
     select?: readonly string[]

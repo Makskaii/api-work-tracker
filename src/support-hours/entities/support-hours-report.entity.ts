@@ -19,6 +19,11 @@ export class SupportHoursReport {
   @Column({ name: 'task_title', type: 'varchar', length: 500, nullable: true }) taskTitle!: string | null
   @Column({ name: 'bitrix_responsible_id', type: 'varchar', length: 64, nullable: true }) bitrixResponsibleId!: string | null
   @Column({ name: 'responsible_name', type: 'varchar', length: 500, nullable: true }) responsibleName!: string | null
+  @Column({ name: 'bitrix_company_id', type: 'varchar', length: 64, nullable: true }) bitrixCompanyId!: string | null
+  @Column({ name: 'company_name', type: 'varchar', length: 500, nullable: true }) companyName!: string | null
+  @Column({ name: 'project_title', type: 'varchar', length: 500, nullable: true }) projectTitle!: string | null
+  @Column({ name: 'bitrix_activity_id', type: 'varchar', length: 64, nullable: true }) bitrixActivityId!: string | null
+  @Column({ name: 'activity_title', type: 'varchar', length: 500, nullable: true }) activityTitle!: string | null
   @CreateDateColumn({ name: 'created_at' }) createdAt!: Date
   @UpdateDateColumn({ name: 'updated_at' }) updatedAt!: Date
   @OneToMany(() => SupportHoursConsumption, (consumption) => consumption.report) consumptions!: SupportHoursConsumption[]

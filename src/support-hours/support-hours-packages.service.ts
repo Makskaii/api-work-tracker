@@ -24,9 +24,10 @@ type BitrixSupportReport = {
   begindate?: string
   createdTime?: string
   lastActivityTime?: string
+  assignedById?: string | number | null
   [DailyReportCodes.title]?: string | null
   [DailyReportCodes.timeSpent]?: string | number | null
-  [DailyReportCodes.taskId]?: string | number | null
+  [DailyReportCodes.parentId]?: string | number | null
   [DailyReportCodes.parentproject]?: string | number | null
   [SUPPORT_FLAG]?: string | number | boolean | null
 }
@@ -173,7 +174,7 @@ export class SupportHoursPackagesService {
     const reports = await this.bitrixService.listAllItems<BitrixSupportReport>({
       entityTypeId: EntityTypeIds.reports,
       filter: { [`>=lastActivityTime`]: since.toISOString(), [SUPPORT_FLAG]: 'Y' },
-      select: ['id', 'title', 'begindate', 'createdTime', 'lastActivityTime', DailyReportCodes.title, DailyReportCodes.timeSpent, DailyReportCodes.taskId, DailyReportCodes.parentproject, SUPPORT_FLAG],
+      select: ['id', 'title', 'begindate', 'createdTime', 'lastActivityTime', 'assignedById', DailyReportCodes.title, DailyReportCodes.timeSpent, DailyReportCodes.parentId, DailyReportCodes.parentproject, SUPPORT_FLAG],
     })
     const projectIds = new Set<number>()
 
@@ -220,12 +221,19 @@ export class SupportHoursPackagesService {
     entity.lastActivityAt = lastActivityAt
     entity.reportTitle = report.title?.trim() || null
     entity.reportDescription = report[DailyReportCodes.title]?.trim() || null
-    const bitrixTaskId = String(report[DailyReportCodes.taskId] ?? '').trim()
+    const bitrixTaskId = String(report[DailyReportCodes.parentId] ?? '').trim()
     const task = bitrixTaskId
       ? await this.bitrixService.getItem<BitrixTask>({ entityTypeId: EntityTypeIds.tasks, id: Number(bitrixTaskId) })
       : null
     entity.bitrixTaskId = bitrixTaskId || null
     entity.taskTitle = task?.title?.trim() || null
+    const bitrixResponsibleId = String(report.assignedById ?? '').trim()
+    const responsibleId = Number(bitrixResponsibleId)
+    const responsible = Number.isFinite(responsibleId)
+      ? (await this.bitrixService.getUsersByIds([responsibleId])).at(0)
+      : null
+    entity.bitrixResponsibleId = bitrixResponsibleId || null
+    entity.responsibleName = responsible?.title?.trim() || null
     await this.reportsRepository.save(entity)
     return project.id
   }

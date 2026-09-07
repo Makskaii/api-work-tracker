@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, ParseIntPipe, Patch, Post } from '@nestjs/common'
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common'
 import { CreateSupportHoursPackageDto } from './dto/create-support-hours-package.dto'
 import { UpdateSupportHoursPackageDto } from './dto/update-support-hours-package.dto'
 import { SupportHoursPackagesService } from './support-hours-packages.service'
@@ -20,6 +20,18 @@ export class SupportHoursPackagesController {
   @Post('projects/sync')
   syncSupportProjects() {
     return this.service.syncSupportProjects()
+  }
+
+  @Get('reports/webhook')
+  @HttpCode(202)
+  receiveReportWebhookGet(@Query() query: Record<string, unknown>) {
+    return this.service.processReportWebhook(query)
+  }
+
+  @Post('reports/webhook')
+  @HttpCode(202)
+  receiveReportWebhookPost(@Body() body: Record<string, unknown>) {
+    return this.service.processReportWebhook(body)
   }
 
   @Post()

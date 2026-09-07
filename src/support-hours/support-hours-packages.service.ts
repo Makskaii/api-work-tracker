@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common'
+import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common'
+import { timingSafeEqual } from 'crypto'
 import { InjectRepository } from '@nestjs/typeorm'
 import { DataSource, In, MoreThanOrEqual, Repository } from 'typeorm'
 import { DailyReportCodes, EntityTypeIds } from '../constants/const'
@@ -16,6 +17,7 @@ const PROJECT_TYPE = 'ufCrm20_1781683772'
 const SUPPORT_PROJECT_TYPE = '410'
 const WINDOW_MS = 48 * 60 * 60 * 1000
 const PROJECTS_SYNC_TTL_MS = 5 * 60 * 1000
+const REPORT_ACTIVITY_IBLOCK_ID = 25
 
 type BitrixSupportReport = {
   id: string | number
@@ -23,8 +25,12 @@ type BitrixSupportReport = {
   begindate?: string
   createdTime?: string
   lastActivityTime?: string
+  assignedById?: string | number | null
+  [DailyReportCodes.company]?: string | number | null
+  [DailyReportCodes.activityType]?: string | number | null
   [DailyReportCodes.title]?: string | null
   [DailyReportCodes.timeSpent]?: string | number | null
+  [DailyReportCodes.parentId]?: string | number | null
   [DailyReportCodes.parentproject]?: string | number | null
   [SUPPORT_FLAG]?: string | number | boolean | null
 }
@@ -34,6 +40,13 @@ type BitrixProject = {
   title?: string
   [PROJECT_TYPE]?: string | string[] | number | null
 }
+
+type BitrixTask = {
+  id: string | number
+  title?: string
+}
+
+type SupportHoursWebhookPayload = Record<string, unknown>
 
 @Injectable()
 export class SupportHoursPackagesService {
@@ -99,6 +112,34 @@ export class SupportHoursPackagesService {
     return this.supportProjectsSyncPromise
   }
 
+  async processReportWebhook(payload: SupportHoursWebhookPayload) {
+    const token = this.readWebhookValue(payload, ['auth', 'application_token']) ?? payload.secret ?? payload.token
+    if (!this.isWebhookTokenValid(token)) throw new UnauthorizedException('Invalid support hours webhook token')
+
+    const event = String(payload.event ?? '').toUpperCase()
+    if (event && event !== 'ONCRMDYNAMICITEMADD' && event !== 'ONCRMDYNAMICITEMUPDATE') {
+      return { processed: false, reason: 'unsupported_event' }
+    }
+
+    const entityTypeId = this.readWebhookValue(payload, ['data', 'FIELDS', 'ENTITY_TYPE_ID']) ?? payload.entityTypeId
+    if (entityTypeId != null && Number(entityTypeId) !== EntityTypeIds.reports) {
+      return { processed: false, reason: 'unsupported_entity_type' }
+    }
+
+    const reportId = this.readWebhookValue(payload, ['data', 'FIELDS', 'ID']) ?? payload.reportId ?? payload.id
+    if (!reportId || !Number.isFinite(Number(reportId))) throw new BadRequestException('Bitrix report ID is required')
+
+    const report = await this.bitrixService.getItem<BitrixSupportReport>({
+      entityTypeId: EntityTypeIds.reports,
+      id: Number(reportId),
+    })
+    if (!report) throw new BadRequestException('Bitrix report was not found')
+
+    const projectId = await this.saveEligibleReport(report)
+    if (projectId) await this.reallocateProject(projectId)
+    return { processed: Boolean(projectId), reportId: String(reportId) }
+  }
+
   async create(dto: CreateSupportHoursPackageDto) {
     const project = await this.findSupportProject(dto.projectId)
     const item = await this.packagesRepository.save(this.packagesRepository.create({
@@ -136,7 +177,7 @@ export class SupportHoursPackagesService {
     const reports = await this.bitrixService.listAllItems<BitrixSupportReport>({
       entityTypeId: EntityTypeIds.reports,
       filter: { [`>=lastActivityTime`]: since.toISOString(), [SUPPORT_FLAG]: 'Y' },
-      select: ['id', 'title', 'begindate', 'createdTime', 'lastActivityTime', DailyReportCodes.title, DailyReportCodes.timeSpent, DailyReportCodes.parentproject, SUPPORT_FLAG],
+      select: ['id', 'title', 'begindate', 'createdTime', 'lastActivityTime', 'assignedById', DailyReportCodes.title, DailyReportCodes.timeSpent, DailyReportCodes.parentId, DailyReportCodes.parentproject, SUPPORT_FLAG],
     })
     const projectIds = new Set<number>()
 
@@ -183,6 +224,34 @@ export class SupportHoursPackagesService {
     entity.lastActivityAt = lastActivityAt
     entity.reportTitle = report.title?.trim() || null
     entity.reportDescription = report[DailyReportCodes.title]?.trim() || null
+    const bitrixTaskId = String(report[DailyReportCodes.parentId] ?? '').trim()
+    const task = bitrixTaskId
+      ? await this.bitrixService.getItem<BitrixTask>({ entityTypeId: EntityTypeIds.tasks, id: Number(bitrixTaskId) })
+      : null
+    entity.bitrixTaskId = bitrixTaskId || null
+    entity.taskTitle = task?.title?.trim() || null
+    const bitrixResponsibleId = String(report.assignedById ?? '').trim()
+    const responsibleId = Number(bitrixResponsibleId)
+    const responsible = Number.isFinite(responsibleId)
+      ? (await this.bitrixService.getUsersByIds([responsibleId])).at(0)
+      : null
+    entity.bitrixResponsibleId = bitrixResponsibleId || null
+    entity.responsibleName = responsible?.title?.trim() || null
+    const bitrixCompanyId = String(report[DailyReportCodes.company] ?? '').trim()
+    const bitrixActivityId = String(report[DailyReportCodes.activityType] ?? '').trim()
+    const [company, activityTitle] = await Promise.all([
+      Number.isFinite(Number(bitrixCompanyId))
+        ? this.bitrixService.getCompany<{ TITLE?: string }>(Number(bitrixCompanyId))
+        : Promise.resolve(null),
+      Number.isFinite(Number(bitrixActivityId))
+        ? this.bitrixService.getListElementTitle(REPORT_ACTIVITY_IBLOCK_ID, Number(bitrixActivityId))
+        : Promise.resolve(null),
+    ])
+    entity.bitrixCompanyId = bitrixCompanyId || null
+    entity.companyName = company?.TITLE?.trim() || null
+    entity.projectTitle = project.title?.trim() || null
+    entity.bitrixActivityId = bitrixActivityId || null
+    entity.activityTitle = activityTitle
     await this.reportsRepository.save(entity)
     return project.id
   }
@@ -218,6 +287,29 @@ export class SupportHoursPackagesService {
 
     this.supportProjectsLastSyncAt = Date.now()
     return { created, updated }
+  }
+
+  private readWebhookValue(payload: SupportHoursWebhookPayload, path: string[]) {
+    let value: unknown = payload
+    for (const key of path) {
+      if (!value || typeof value !== 'object') {
+        value = undefined
+        break
+      }
+      value = (value as Record<string, unknown>)[key]
+    }
+    if (value != null) return value
+    const flatKey = `${path[0]}${path.slice(1).map((key) => `[${key}]`).join('')}`
+    return payload[flatKey]
+  }
+
+  private isWebhookTokenValid(value: unknown) {
+    const expected = process.env.SUPPORT_HOURS_WEBHOOK_SECRET
+    const received = String(value ?? '')
+    if (!expected || !received) return false
+    const expectedBuffer = Buffer.from(expected)
+    const receivedBuffer = Buffer.from(received)
+    return expectedBuffer.length === receivedBuffer.length && timingSafeEqual(expectedBuffer, receivedBuffer)
   }
 
   private async upsertSupportProject(bitrixProject: BitrixProject) {

@@ -17,6 +17,11 @@ export class SupportHoursPackagesController {
     return this.service.findSupportProjects()
   }
 
+  @Get('projects/:id/tasks')
+  findSupportProjectTasks(@Param('id', ParseIntPipe) id: number) {
+    return this.service.findSupportProjectTasks(id)
+  }
+
   @Post('projects/sync')
   syncSupportProjects() {
     return this.service.syncSupportProjects()
@@ -30,8 +35,11 @@ export class SupportHoursPackagesController {
 
   @Post('reports/webhook')
   @HttpCode(202)
-  receiveReportWebhookPost(@Body() body: Record<string, unknown>) {
-    return this.service.processReportWebhook(body)
+  receiveReportWebhookPost(
+    @Body() body: Record<string, unknown>,
+    @Query() query: Record<string, unknown>,
+  ) {
+    return this.service.processReportWebhook({ ...body, ...query })
   }
 
   @Post()

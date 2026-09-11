@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException, Unauthorize
 import { timingSafeEqual } from 'crypto'
 import { InjectRepository } from '@nestjs/typeorm'
 import { DataSource, In, MoreThanOrEqual, Repository } from 'typeorm'
-import { DailyReportCodes, EntityTypeIds } from '../constants/const'
+import { DailyReportCodes, EntityTypeIds, TaskCodes } from '../constants/const'
 import { ReportProject, ReportProjectType } from '../project-reports/entities/project-report-project.entity'
 import { BitrixService } from '../shared/integrations/bitrix/bitrix.service'
 import { CreateSupportHoursPackageDto } from './dto/create-support-hours-package.dto'
@@ -17,6 +17,7 @@ const PROJECT_TYPE = 'ufCrm20_1781683772'
 const SUPPORT_PROJECT_TYPE = '410'
 const WINDOW_MS = 48 * 60 * 60 * 1000
 const PROJECTS_SYNC_TTL_MS = 5 * 60 * 1000
+const PROJECT_TASKS_TTL_MS = 5 * 60 * 1000
 const REPORT_ACTIVITY_IBLOCK_ID = 25
 
 type BitrixSupportReport = {
@@ -53,6 +54,7 @@ export class SupportHoursPackagesService {
   private readonly logger = new Logger(SupportHoursPackagesService.name)
   private supportProjectsSyncPromise: Promise<{ created: number; updated: number }> | null = null
   private supportProjectsLastSyncAt = 0
+  private readonly supportProjectTasksCache = new Map<number, { expiresAt: number; tasks: BitrixTask[] }>()
 
   constructor(
     @InjectRepository(ReportProject) private readonly projectsRepository: Repository<ReportProject>,
@@ -100,20 +102,54 @@ export class SupportHoursPackagesService {
     })
   }
 
+  async findSupportProjectTasks(projectId: number) {
+    const cached = this.supportProjectTasksCache.get(projectId)
+    if (cached && cached.expiresAt > Date.now()) return cached.tasks
+
+    const project = await this.findSupportProject(projectId)
+    const bitrixProjectId = Number(project.bitrixProjectId)
+    if (!Number.isSafeInteger(bitrixProjectId) || bitrixProjectId <= 0) {
+      throw new BadRequestException('Support project Bitrix ID is invalid')
+    }
+
+    const tasks = (await this.bitrixService.listAllItems<BitrixTask>({
+      entityTypeId: EntityTypeIds.tasks,
+      filter: { [TaskCodes.parentproject]: bitrixProjectId },
+      select: ['id', 'title'],
+    }))
+      .map((task) => ({
+        id: task.id,
+        title: task.title?.trim() || `Задача ${task.id}`,
+      }))
+      .toSorted((first, second) => first.title.localeCompare(second.title, 'ru'))
+
+    this.supportProjectTasksCache.set(projectId, {
+      tasks,
+      expiresAt: Date.now() + PROJECT_TASKS_TTL_MS,
+    })
+    return tasks
+  }
+
   async syncSupportProjects() {
     if (Date.now() - this.supportProjectsLastSyncAt < PROJECTS_SYNC_TTL_MS) {
       return { created: 0, updated: 0 }
     }
     if (!this.supportProjectsSyncPromise) {
-      this.supportProjectsSyncPromise = this.performSupportProjectsSync().finally(() => {
-        this.supportProjectsSyncPromise = null
-      })
+      this.supportProjectsSyncPromise = this.performSupportProjectsSync()
+        .catch((error: unknown) => {
+          const reason = error instanceof Error ? error.message : String(error)
+          this.logger.error(`Support projects synchronization failed: ${reason}`)
+          throw error
+        })
+        .finally(() => {
+          this.supportProjectsSyncPromise = null
+        })
     }
     return this.supportProjectsSyncPromise
   }
 
   async processReportWebhook(payload: SupportHoursWebhookPayload) {
-    const token = this.readWebhookValue(payload, ['auth', 'application_token']) ?? payload.secret ?? payload.token
+    const token = payload.secret ?? payload.token ?? this.readWebhookValue(payload, ['auth', 'application_token'])
     if (!this.isWebhookTokenValid(token)) throw new UnauthorizedException('Invalid support hours webhook token')
 
     const event = String(payload.event ?? '').toUpperCase()

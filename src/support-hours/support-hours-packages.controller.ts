@@ -17,6 +17,11 @@ export class SupportHoursPackagesController {
     return this.service.findSupportProjects()
   }
 
+  @Get('projects/:id/tasks')
+  findSupportProjectTasks(@Param('id', ParseIntPipe) id: number) {
+    return this.service.findSupportProjectTasks(id)
+  }
+
   @Post('projects/sync')
   syncSupportProjects() {
     return this.service.syncSupportProjects()

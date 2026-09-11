@@ -149,7 +149,7 @@ export class SupportHoursPackagesService {
   }
 
   async processReportWebhook(payload: SupportHoursWebhookPayload) {
-    const token = this.readWebhookValue(payload, ['auth', 'application_token']) ?? payload.secret ?? payload.token
+    const token = payload.secret ?? payload.token ?? this.readWebhookValue(payload, ['auth', 'application_token'])
     if (!this.isWebhookTokenValid(token)) throw new UnauthorizedException('Invalid support hours webhook token')
 
     const event = String(payload.event ?? '').toUpperCase()

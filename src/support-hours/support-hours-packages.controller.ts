@@ -35,8 +35,11 @@ export class SupportHoursPackagesController {
 
   @Post('reports/webhook')
   @HttpCode(202)
-  receiveReportWebhookPost(@Body() body: Record<string, unknown>) {
-    return this.service.processReportWebhook(body)
+  receiveReportWebhookPost(
+    @Body() body: Record<string, unknown>,
+    @Query() query: Record<string, unknown>,
+  ) {
+    return this.service.processReportWebhook({ ...body, ...query })
   }
 
   @Post()

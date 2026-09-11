@@ -105,9 +105,15 @@ export class SupportHoursPackagesService {
       return { created: 0, updated: 0 }
     }
     if (!this.supportProjectsSyncPromise) {
-      this.supportProjectsSyncPromise = this.performSupportProjectsSync().finally(() => {
-        this.supportProjectsSyncPromise = null
-      })
+      this.supportProjectsSyncPromise = this.performSupportProjectsSync()
+        .catch((error: unknown) => {
+          const reason = error instanceof Error ? error.message : String(error)
+          this.logger.error(`Support projects synchronization failed: ${reason}`)
+          throw error
+        })
+        .finally(() => {
+          this.supportProjectsSyncPromise = null
+        })
     }
     return this.supportProjectsSyncPromise
   }

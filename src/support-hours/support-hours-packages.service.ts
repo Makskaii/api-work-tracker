@@ -45,6 +45,7 @@ type BitrixProject = {
 type BitrixTask = {
   id: string | number
   title?: string
+  stageId?: string | null
 }
 
 type SupportHoursWebhookPayload = Record<string, unknown>
@@ -115,11 +116,12 @@ export class SupportHoursPackagesService {
     const tasks = (await this.bitrixService.listAllItems<BitrixTask>({
       entityTypeId: EntityTypeIds.tasks,
       filter: { [TaskCodes.parentproject]: bitrixProjectId },
-      select: ['id', 'title'],
+      select: ['id', 'title', 'stageId'],
     }))
       .map((task) => ({
         id: task.id,
         title: task.title?.trim() || `Задача ${task.id}`,
+        stageId: task.stageId ?? null,
       }))
       .toSorted((first, second) => first.title.localeCompare(second.title, 'ru'))
 

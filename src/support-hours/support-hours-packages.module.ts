@@ -1,3 +1,5 @@
+import { PdfModule } from '../shared/pdf/pdf.module'
+import { SupportHoursPackageReportService } from './support-hours-package-report.service'
 import { Module } from '@nestjs/common'
 import { TypeOrmModule } from '@nestjs/typeorm'
 import { ReportProject } from '../project-reports/entities/project-report-project.entity'
@@ -10,8 +12,8 @@ import { SupportHoursPackage } from './entities/support-hours-package.entity'
 import { SupportHoursReport } from './entities/support-hours-report.entity'
 
 @Module({
-  imports: [BitrixModule, TypeOrmModule.forFeature([ReportProject, SupportHoursPackage, SupportHoursReport, SupportHoursConsumption])],
+  imports: [BitrixModule, PdfModule, TypeOrmModule.forFeature([ReportProject, SupportHoursPackage, SupportHoursReport, SupportHoursConsumption])],
   controllers: [SupportHoursPackagesController],
-  providers: [SupportHoursPackagesService, SupportHoursPackagesScheduler],
+  providers: [SupportHoursPackagesService, SupportHoursPackagesScheduler, SupportHoursPackageReportService],
 })
 export class SupportHoursPackagesModule {}

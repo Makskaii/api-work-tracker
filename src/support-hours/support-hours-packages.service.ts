@@ -1,7 +1,7 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common'
+import { BadGatewayException, BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common'
 import { timingSafeEqual } from 'crypto'
 import { InjectRepository } from '@nestjs/typeorm'
-import { DataSource, In, MoreThanOrEqual, Repository } from 'typeorm'
+import { DataSource, EntityManager, In, Repository } from 'typeorm'
 import { DailyReportCodes, EntityTypeIds, TaskCodes } from '../constants/const'
 import { ReportProject, ReportProjectType } from '../project-reports/entities/project-report-project.entity'
 import { BitrixService } from '../shared/integrations/bitrix/bitrix.service'
@@ -19,6 +19,8 @@ const WINDOW_MS = 48 * 60 * 60 * 1000
 const PROJECTS_SYNC_TTL_MS = 5 * 60 * 1000
 const PROJECT_TASKS_TTL_MS = 5 * 60 * 1000
 const REPORT_ACTIVITY_IBLOCK_ID = 25
+const REPORT_RECHECK_BATCH_SIZE = 50
+const REPORT_SELECT = ['id', 'title', 'begindate', 'createdTime', 'lastActivityTime', 'assignedById', DailyReportCodes.title, DailyReportCodes.timeSpent, DailyReportCodes.parentId, DailyReportCodes.parentproject, DailyReportCodes.company, DailyReportCodes.activityType, SUPPORT_FLAG]
 
 type BitrixSupportReport = {
   id: string | number
@@ -55,6 +57,8 @@ export class SupportHoursPackagesService {
   private readonly logger = new Logger(SupportHoursPackagesService.name)
   private supportProjectsSyncPromise: Promise<{ created: number; updated: number }> | null = null
   private supportProjectsLastSyncAt = 0
+  private mutationQueue: Promise<unknown> = Promise.resolve()
+  private reportsSyncPromise: Promise<{ processedReports: number; synchronizedAt: string }> | null = null
   private readonly supportProjectTasksCache = new Map<number, { expiresAt: number; tasks: BitrixTask[] }>()
 
   constructor(
@@ -96,8 +100,24 @@ export class SupportHoursPackagesService {
     })
   }
 
+  async getReportSnapshot(packageId: number): Promise<SupportHoursPackage> {
+    if (this.positiveId(packageId) === null) throw new BadRequestException('A positive package ID is required')
+    if (!(await this.packagesRepository.findOne({ where: { id: packageId } }))) {
+      throw new NotFoundException('Support hours package not found')
+    }
+    await this.sync()
+    return await this.enqueueMutation(() => this.dataSource.transaction(async (manager) => {
+      const item = await manager.getRepository(SupportHoursPackage).findOne({
+        where: { id: packageId },
+        relations: { project: true, consumptions: { report: true } },
+      })
+      if (!item) throw new NotFoundException('Support hours package not found')
+      return item
+    }))
+  }
+
   async findSupportProjects() {
-    return this.projectsRepository.find({
+    return await this.projectsRepository.find({
       where: { projectType: ReportProjectType.Support },
       order: { title: 'ASC', id: 'ASC' },
     })
@@ -147,7 +167,7 @@ export class SupportHoursPackagesService {
           this.supportProjectsSyncPromise = null
         })
     }
-    return this.supportProjectsSyncPromise
+    return await this.supportProjectsSyncPromise
   }
 
   async processReportWebhook(payload: SupportHoursWebhookPayload) {
@@ -155,107 +175,167 @@ export class SupportHoursPackagesService {
     if (!this.isWebhookTokenValid(token)) throw new UnauthorizedException('Invalid support hours webhook token')
 
     const event = String(payload.event ?? '').toUpperCase()
-    if (event && event !== 'ONCRMDYNAMICITEMADD' && event !== 'ONCRMDYNAMICITEMUPDATE') {
+    if (event && event !== 'ONCRMDYNAMICITEMADD' && event !== 'ONCRMDYNAMICITEMUPDATE' && event !== 'ONCRMDYNAMICITEMDELETE') {
       return { processed: false, reason: 'unsupported_event' }
     }
 
     const entityTypeId = this.readWebhookValue(payload, ['data', 'FIELDS', 'ENTITY_TYPE_ID']) ?? payload.entityTypeId
-    if (entityTypeId != null && Number(entityTypeId) !== EntityTypeIds.reports) {
+    if ((entityTypeId == null && event === 'ONCRMDYNAMICITEMDELETE') || (entityTypeId != null && this.positiveId(entityTypeId) !== EntityTypeIds.reports)) {
       return { processed: false, reason: 'unsupported_entity_type' }
     }
 
     const reportId = this.readWebhookValue(payload, ['data', 'FIELDS', 'ID']) ?? payload.reportId ?? payload.id
-    if (!reportId || !Number.isFinite(Number(reportId))) throw new BadRequestException('Bitrix report ID is required')
+    const parsedReportId = this.positiveId(reportId)
+    if (parsedReportId === null) throw new BadRequestException('A positive integer Bitrix report ID is required')
 
-    const report = await this.bitrixService.getItem<BitrixSupportReport>({
-      entityTypeId: EntityTypeIds.reports,
-      id: Number(reportId),
+    return await this.enqueueMutation(async () => {
+      if (event === 'ONCRMDYNAMICITEMDELETE') {
+        await this.applyReport(String(parsedReportId), null)
+        return { processed: true, reportId: String(parsedReportId) }
+      }
+      const report = await this.bitrixService.getItem<BitrixSupportReport>({
+        entityTypeId: EntityTypeIds.reports,
+        id: parsedReportId,
+      })
+      if (!report || String(report.id) !== String(parsedReportId)) throw new BadGatewayException('Bitrix returned an invalid report')
+      const eligible = await this.applyReport(String(parsedReportId), report)
+      return { processed: eligible, reportId: String(parsedReportId) }
     })
-    if (!report) throw new BadRequestException('Bitrix report was not found')
-
-    const projectId = await this.saveEligibleReport(report)
-    if (projectId) await this.reallocateProject(projectId)
-    return { processed: Boolean(projectId), reportId: String(reportId) }
   }
 
   async create(dto: CreateSupportHoursPackageDto) {
-    const project = await this.findSupportProject(dto.projectId)
-    const item = await this.packagesRepository.save(this.packagesRepository.create({
-      projectId: project.id,
-      purchasedHours: this.round(dto.purchasedHours),
-      purchaseDate: dto.purchaseDate,
-      amount: dto.amount == null ? null : this.round(dto.amount),
-      comment: dto.comment?.trim() || null,
-    }))
-    await this.reallocateProject(project.id)
-    return item
+    return await this.enqueueMutation(async () => {
+      const project = await this.findSupportProject(dto.projectId)
+      const item = await this.packagesRepository.save(this.packagesRepository.create({
+        projectId: project.id,
+        purchasedHours: this.round(dto.purchasedHours),
+        purchaseDate: dto.purchaseDate,
+        amount: dto.amount == null ? null : this.round(dto.amount),
+        comment: dto.comment?.trim() || null,
+      }))
+      await this.reallocateProject(project.id)
+      return item
+    })
   }
 
   async update(id: number, dto: UpdateSupportHoursPackageDto) {
-    const item = await this.packagesRepository.findOne({ where: { id } })
-    if (!item) throw new NotFoundException('Support hours package not found')
-    if (dto.purchasedHours !== undefined) item.purchasedHours = this.round(dto.purchasedHours)
-    if (dto.purchaseDate !== undefined) item.purchaseDate = dto.purchaseDate
-    if (dto.amount !== undefined) item.amount = dto.amount == null ? null : this.round(dto.amount)
-    if (dto.comment !== undefined) item.comment = dto.comment?.trim() || null
-    const saved = await this.packagesRepository.save(item)
-    await this.reallocateProject(item.projectId)
-    return saved
+    return await this.enqueueMutation(async () => {
+      const item = await this.packagesRepository.findOne({ where: { id } })
+      if (!item) throw new NotFoundException('Support hours package not found')
+      if (dto.purchasedHours !== undefined) item.purchasedHours = this.round(dto.purchasedHours)
+      if (dto.purchaseDate !== undefined) item.purchaseDate = dto.purchaseDate
+      if (dto.amount !== undefined) item.amount = dto.amount == null ? null : this.round(dto.amount)
+      if (dto.comment !== undefined) item.comment = dto.comment?.trim() || null
+      const saved = await this.packagesRepository.save(item)
+      await this.reallocateProject(item.projectId)
+      return saved
+    })
   }
 
   async remove(id: number): Promise<void> {
-    const item = await this.packagesRepository.findOne({ where: { id } })
-    if (!item) throw new NotFoundException('Support hours package not found')
-    await this.packagesRepository.remove(item)
-    await this.reallocateProject(item.projectId)
+    return await this.enqueueMutation(async () => {
+      const item = await this.packagesRepository.findOne({ where: { id } })
+      if (!item) throw new NotFoundException('Support hours package not found')
+      await this.packagesRepository.remove(item)
+      await this.reallocateProject(item.projectId)
+    })
   }
 
   async sync() {
+    if (!this.reportsSyncPromise) {
+      this.reportsSyncPromise = this.enqueueMutation(() => this.performReportsSync())
+        .finally(() => { this.reportsSyncPromise = null })
+    }
+    return await this.reportsSyncPromise
+  }
+
+  private async performReportsSync() {
     const since = new Date(Date.now() - WINDOW_MS)
+    const cached = await this.reportsRepository.find()
     const reports = await this.bitrixService.listAllItems<BitrixSupportReport>({
       entityTypeId: EntityTypeIds.reports,
-      filter: { [`>=lastActivityTime`]: since.toISOString(), [SUPPORT_FLAG]: 'Y' },
-      select: ['id', 'title', 'begindate', 'createdTime', 'lastActivityTime', 'assignedById', DailyReportCodes.title, DailyReportCodes.timeSpent, DailyReportCodes.parentId, DailyReportCodes.parentproject, SUPPORT_FLAG],
+      filter: { '>=lastActivityTime': since.toISOString(), [SUPPORT_FLAG]: 'Y' },
+      select: REPORT_SELECT,
     })
-    const projectIds = new Set<number>()
-
+    const cachedIds = new Set(cached.map((report) => report.bitrixReportId))
     for (const report of reports) {
-      const projectId = await this.saveEligibleReport(report)
-      if (projectId) projectIds.add(projectId)
+      if (this.positiveId(report.id) === null) throw new BadGatewayException('Bitrix returned an invalid report ID')
+      // Known reports are read again without eligibility filters below.
+      if (!cachedIds.has(String(report.id))) await this.applyReport(String(report.id), report)
     }
 
-    const cached = await this.reportsRepository.find({ where: { lastActivityAt: MoreThanOrEqual(since) } })
-    for (const cachedReport of cached) {
-      try {
-        const report = await this.bitrixService.getItem<BitrixSupportReport>({ entityTypeId: EntityTypeIds.reports, id: Number(cachedReport.bitrixReportId) })
-        if (!report || !(await this.saveEligibleReport(report))) {
-          await this.reportsRepository.remove(cachedReport)
-          projectIds.add(cachedReport.projectId)
+    for (let offset = 0; offset < cached.length; offset += REPORT_RECHECK_BATCH_SIZE) {
+      const batch = cached.slice(offset, offset + REPORT_RECHECK_BATCH_SIZE)
+      const ids = batch.map((report) => report.bitrixReportId)
+      if (ids.some((id) => this.positiveId(id) === null)) throw new BadGatewayException('Cached report ID is invalid')
+      const current = await this.bitrixService.listAllItems<BitrixSupportReport>({
+        entityTypeId: EntityTypeIds.reports,
+        filter: { '@id': ids },
+        select: REPORT_SELECT,
+      })
+      const byId = new Map<string, BitrixSupportReport>()
+      for (const report of current) {
+        const id = String(report?.id)
+        if (!ids.includes(id) || byId.has(id) ||
+          !Object.hasOwn(report, SUPPORT_FLAG) ||
+          !Object.hasOwn(report, DailyReportCodes.timeSpent) ||
+          !Object.hasOwn(report, DailyReportCodes.parentproject)) {
+          throw new BadGatewayException('Bitrix returned an invalid report recheck response')
         }
-      } catch (error) {
-        this.logger.warn(`Unable to recheck Bitrix report ${cachedReport.bitrixReportId}`)
+        byId.set(id, report)
+      }
+      // Only a complete successful, unfiltered response can establish absence.
+      for (const report of batch) {
+        await this.applyReport(report.bitrixReportId, byId.get(report.bitrixReportId) ?? null)
       }
     }
-
-    await Promise.all(Array.from(projectIds).map((projectId) => this.reallocateProject(projectId)))
     return { processedReports: reports.length, synchronizedAt: new Date().toISOString() }
   }
 
-  private async saveEligibleReport(report: BitrixSupportReport): Promise<number | null> {
+  private enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.mutationQueue.then(operation)
+    this.mutationQueue = result.catch(() => undefined)
+    return result
+  }
+
+  private async applyReport(bitrixReportId: string, report: BitrixSupportReport | null): Promise<boolean> {
+    if (report && (!Object.hasOwn(report, SUPPORT_FLAG) || !Object.hasOwn(report, DailyReportCodes.timeSpent) || !Object.hasOwn(report, DailyReportCodes.parentproject))) {
+      throw new BadGatewayException('Bitrix returned an invalid report')
+    }
+    const prepared = report ? await this.prepareEligibleReport(report) : null
+    await this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(SupportHoursReport)
+      const existing = await repository.findOne({ where: { bitrixReportId } })
+      const projectIds = new Set<number>()
+      if (existing) projectIds.add(existing.projectId)
+      if (prepared) {
+        await repository.save(repository.create({ ...existing, ...prepared, bitrixReportId }))
+        projectIds.add(prepared.projectId)
+      } else if (existing) {
+        await repository.remove(existing)
+      }
+      for (const projectId of projectIds) await this.reallocateProjectInTransaction(manager, projectId)
+    })
+    return prepared !== null
+  }
+
+  private async prepareEligibleReport(report: BitrixSupportReport): Promise<SupportHoursReport | null> {
     const bitrixProjectId = String(report[DailyReportCodes.parentproject] ?? '')
     const hours = this.toNumber(report[DailyReportCodes.timeSpent])
     if (!this.isChecked(report[SUPPORT_FLAG]) || !bitrixProjectId || hours <= 0) return null
     const bitrixProject = await this.bitrixService.getItem<BitrixProject>({ entityTypeId: EntityTypeIds.projects, id: Number(bitrixProjectId) })
-    if (!bitrixProject || !this.isSupportProject(bitrixProject[PROJECT_TYPE])) return null
+    if (!bitrixProject || String(bitrixProject.id) !== bitrixProjectId || !Object.hasOwn(bitrixProject, PROJECT_TYPE)) {
+      throw new BadGatewayException('Bitrix returned an invalid project')
+    }
+    if (!this.isSupportProject(bitrixProject[PROJECT_TYPE])) return null
     const project = await this.upsertSupportProject(bitrixProject)
     if (!project) return null
     const reportDate = this.toDate(report.begindate ?? report.createdTime)
     const lastActivityAt = this.toDate(report.lastActivityTime ?? report.createdTime)
-    if (!reportDate || !lastActivityAt) return null
+    if (!reportDate || !lastActivityAt) throw new BadGatewayException('Bitrix returned invalid report dates')
 
     const bitrixReportId = String(report.id)
-    const existing = await this.reportsRepository.findOne({ where: { bitrixReportId } })
-    const entity = existing ?? this.reportsRepository.create({ bitrixReportId, projectId: project.id })
+    const entity = this.reportsRepository.create({ bitrixReportId, projectId: project.id })
     entity.projectId = project.id
     entity.hours = this.round(hours)
     entity.reportDate = reportDate
@@ -263,14 +343,15 @@ export class SupportHoursPackagesService {
     entity.reportTitle = report.title?.trim() || null
     entity.reportDescription = report[DailyReportCodes.title]?.trim() || null
     const bitrixTaskId = String(report[DailyReportCodes.parentId] ?? '').trim()
-    const task = bitrixTaskId
-      ? await this.bitrixService.getItem<BitrixTask>({ entityTypeId: EntityTypeIds.tasks, id: Number(bitrixTaskId) })
+    const validTaskId = this.positiveId(bitrixTaskId)
+    const task = validTaskId !== null
+      ? (await this.bitrixService.listAllItems<BitrixTask>({ entityTypeId: EntityTypeIds.tasks, filter: { '@id': [validTaskId] }, select: ['id', 'title'] })).at(0)
       : null
-    entity.bitrixTaskId = bitrixTaskId || null
+    entity.bitrixTaskId = validTaskId === null ? null : bitrixTaskId
     entity.taskTitle = task?.title?.trim() || null
     const bitrixResponsibleId = String(report.assignedById ?? '').trim()
     const responsibleId = Number(bitrixResponsibleId)
-    const responsible = Number.isFinite(responsibleId)
+    const responsible = this.positiveId(responsibleId) !== null
       ? (await this.bitrixService.getUsersByIds([responsibleId])).at(0)
       : null
     entity.bitrixResponsibleId = bitrixResponsibleId || null
@@ -278,10 +359,10 @@ export class SupportHoursPackagesService {
     const bitrixCompanyId = String(report[DailyReportCodes.company] ?? '').trim()
     const bitrixActivityId = String(report[DailyReportCodes.activityType] ?? '').trim()
     const [company, activityTitle] = await Promise.all([
-      Number.isFinite(Number(bitrixCompanyId))
+      this.positiveId(bitrixCompanyId) !== null
         ? this.bitrixService.getCompany<{ TITLE?: string }>(Number(bitrixCompanyId))
         : Promise.resolve(null),
-      Number.isFinite(Number(bitrixActivityId))
+      this.positiveId(bitrixActivityId) !== null
         ? this.bitrixService.getListElementTitle(REPORT_ACTIVITY_IBLOCK_ID, Number(bitrixActivityId))
         : Promise.resolve(null),
     ])
@@ -290,8 +371,7 @@ export class SupportHoursPackagesService {
     entity.projectTitle = project.title?.trim() || null
     entity.bitrixActivityId = bitrixActivityId || null
     entity.activityTitle = activityTitle
-    await this.reportsRepository.save(entity)
-    return project.id
+    return entity
   }
 
   private async performSupportProjectsSync() {
@@ -370,31 +450,40 @@ export class SupportHoursPackagesService {
   }
 
   private async reallocateProject(projectId: number): Promise<void> {
-    await this.dataSource.transaction(async (manager) => {
-      const packagesRepository = manager.getRepository(SupportHoursPackage)
-      const reportsRepository = manager.getRepository(SupportHoursReport)
-      const consumptionsRepository = manager.getRepository(SupportHoursConsumption)
-      const packages = await packagesRepository.find({ where: { projectId }, order: { purchaseDate: 'ASC', id: 'ASC' } })
-      if (!packages.length) return
-      await consumptionsRepository.delete({ packageId: In(packages.map((item) => item.id)) })
-      const reports = await reportsRepository.find({ where: { projectId }, order: { reportDate: 'ASC', id: 'ASC' } })
-      const consumed = new Map<number, number>()
-      const rows: SupportHoursConsumption[] = []
-      for (const report of reports) {
-        const allocations = allocateSupportHours(packages.map((item) => ({ id: item.id, purchasedHours: this.toNumber(item.purchasedHours), consumedHours: consumed.get(item.id) ?? 0 })), this.toNumber(report.hours))
-        allocations.forEach((allocation) => {
-          consumed.set(allocation.packageId, (consumed.get(allocation.packageId) ?? 0) + allocation.hours)
-          rows.push(consumptionsRepository.create({ reportId: report.id, packageId: allocation.packageId, hours: this.round(allocation.hours) }))
-        })
-      }
-      if (rows.length) await consumptionsRepository.save(rows)
-    })
+    await this.dataSource.transaction((manager) => this.reallocateProjectInTransaction(manager, projectId))
+  }
+
+  private async reallocateProjectInTransaction(manager: EntityManager, projectId: number): Promise<void> {
+    const packagesRepository = manager.getRepository(SupportHoursPackage)
+    const reportsRepository = manager.getRepository(SupportHoursReport)
+    const consumptionsRepository = manager.getRepository(SupportHoursConsumption)
+    const packages = await packagesRepository.find({ where: { projectId }, order: { purchaseDate: 'ASC', id: 'ASC' } })
+    if (!packages.length) return
+    await consumptionsRepository.delete({ packageId: In(packages.map((item) => item.id)) })
+    const reports = await reportsRepository.find({ where: { projectId }, order: { reportDate: 'ASC', id: 'ASC' } })
+    const consumed = new Map<number, number>()
+    const rows: SupportHoursConsumption[] = []
+    for (const report of reports) {
+      const allocations = allocateSupportHours(packages.map((item) => ({ id: item.id, purchasedHours: this.toNumber(item.purchasedHours), consumedHours: consumed.get(item.id) ?? 0 })), this.toNumber(report.hours))
+      allocations.forEach((allocation) => {
+        consumed.set(allocation.packageId, (consumed.get(allocation.packageId) ?? 0) + allocation.hours)
+        rows.push(consumptionsRepository.create({ reportId: report.id, packageId: allocation.packageId, hours: this.round(allocation.hours) }))
+      })
+    }
+    if (rows.length) await consumptionsRepository.save(rows)
   }
 
   private async findSupportProject(id: number) {
     const project = await this.projectsRepository.findOne({ where: { id, projectType: ReportProjectType.Support } })
     if (!project) throw new BadRequestException('Support project not found')
     return project
+  }
+
+  private positiveId(value: unknown): number | null {
+    if (typeof value !== 'string' && typeof value !== 'number') return null
+    if (typeof value === 'string' && !/^\d+$/.test(value)) return null
+    const id = Number(value)
+    return Number.isSafeInteger(id) && id > 0 ? id : null
   }
 
   private isChecked(value: unknown): boolean { return value === true || value === 1 || value === '1' || value === 'Y' }

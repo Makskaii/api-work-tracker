@@ -72,6 +72,38 @@ describe('SupportReportEditorService', () => {
     expect(f.bitrix.getItem.mock.calls.some(([params]) => params.entityTypeId === EntityTypeIds.tasks)).toBe(false)
   })
 
+  it('replaces derived legacy references when an existing report is assigned to another task', async () => {
+    const f = fixture()
+    f.setReport({
+      id: 5402, [DailyReportCodes.parentproject]: '94', [DailyReportCodes.parentId]: '1002',
+      [DailyReportCodes.client]: '45', [DailyReportCodes.project]: '67',
+    })
+    f.setTask({ id: 2002, [TaskCodes.parentproject]: '94', [TaskCodes.client]: '46', [TaskCodes.project]: '68' })
+    const result = await f.service.prepare(31, validDto({ reportId: 5402, taskId: 2002 }))
+    expect(result.fields).toMatchObject({
+      [DailyReportCodes.parentId]: 2002, [DailyReportCodes.parentproject]: 94,
+      [DailyReportCodes.company]: 215, [DailyReportCodes.client]: 46, [DailyReportCodes.project]: 68,
+    })
+    expect(result.fields).not.toHaveProperty('opened')
+    expect(result.fields).not.toHaveProperty('assignedById')
+    expect(f.bitrix.updateItem).not.toHaveBeenCalled()
+  })
+
+  it('clears task-derived references when an existing report becomes a standalone project report', async () => {
+    const f = fixture()
+    f.setReport({
+      id: 5402, [DailyReportCodes.parentproject]: '94', [DailyReportCodes.parentId]: '1002',
+      [DailyReportCodes.client]: '45', [DailyReportCodes.project]: '67',
+    })
+    const result = await f.service.prepare(31, validDto({ reportId: 5402, taskId: null }))
+    expect(result.fields).toMatchObject({
+      [DailyReportCodes.parentId]: 0, [DailyReportCodes.client]: 0, [DailyReportCodes.project]: 0,
+      [DailyReportCodes.parentproject]: 94, [DailyReportCodes.company]: 215,
+    })
+    expect(f.bitrix.getItem.mock.calls.some(([params]) => params.entityTypeId === EntityTypeIds.tasks)).toBe(false)
+    expect(f.bitrix.updateItem).not.toHaveBeenCalled()
+  })
+
   it('rejects linking a task from a different project', async () => {
     const f = fixture()
     f.setTask({ id: 1002, [TaskCodes.parentproject]: '95' })
@@ -137,6 +169,24 @@ describe('SupportReportEditorService', () => {
     const f = fixture()
     f.setReport({ id: 5402, [DailyReportCodes.parentproject]: '94', [DailyReportCodes.includeInPackage]: flag, createdTime: now.toISOString() })
     expect((await f.service.edit(31, 5402)).includeInPackage).toBe(false)
+  })
+
+  it.each(['', '  ', null, undefined, 'not-a-date'])('uses the creation date when the work date is unusable: %s', async (begindate) => {
+    const f = fixture()
+    f.setReport({ id: 5402, [DailyReportCodes.parentproject]: '94', begindate, createdTime: '2026-09-27T22:30:00Z' })
+    expect((await f.service.edit(31, 5402)).reportDate).toBe('2026-09-28')
+  })
+
+  it('keeps a valid work date rather than replacing it with the creation date', async () => {
+    const f = fixture()
+    f.setReport({ id: 5402, [DailyReportCodes.parentproject]: '94', begindate: '2026-09-01T10:00:00Z', createdTime: now.toISOString() })
+    expect((await f.service.edit(31, 5402)).reportDate).toBe('2026-09-01')
+  })
+
+  it('returns a controlled error when neither upstream date is valid', async () => {
+    const f = fixture()
+    f.setReport({ id: 5402, [DailyReportCodes.parentproject]: '94', begindate: 'invalid', createdTime: '' })
+    await expect(f.service.edit(31, 5402)).rejects.toBeInstanceOf(BadGatewayException)
   })
 
   it('rejects unavailable or reclassified support projects instead of trusting stale local metadata', async () => {

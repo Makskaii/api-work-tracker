@@ -46,8 +46,11 @@ export class SupportReportEditorService {
   async edit(projectId: number, reportId: number) {
     const project = await this.project(projectId)
     const report = await this.report(reportId, project.bitrixProjectId!)
-    const reportDate = dayjs(String(report.begindate ?? report.createdTime)).tz('Europe/Moscow')
-    if (!reportDate.isValid()) throw new BadGatewayException('В Битриксе указана некорректная дата отчёта')
+    const sourceDate = [report.begindate, report.createdTime]
+      .map((value) => typeof value === 'string' && value.trim() ? dayjs(value) : null)
+      .find((date) => date?.isValid())
+    if (!sourceDate) throw new BadGatewayException('В Битриксе указана некорректная дата отчёта')
+    const reportDate = sourceDate.tz('Europe/Moscow')
     return {
       id: reportId,
       taskId: positiveId(report[DailyReportCodes.parentId]),
@@ -85,14 +88,14 @@ export class SupportReportEditorService {
       [DailyReportCodes.parentproject]: Number(project.bitrixProjectId),
       [DailyReportCodes.parentId]: dto.taskId ?? 0,
       [DailyReportCodes.company]: positiveId(liveProject[ProjectCodes.company]) ?? 0,
+      [DailyReportCodes.client]: positiveId(task?.[TaskCodes.client]) ?? 0,
+      [DailyReportCodes.project]: positiveId(task?.[TaskCodes.project]) ?? 0,
       [DailyReportCodes.activityType]: dto.activityId,
       [DailyReportCodes.includeInPackage]: dto.includeInPackage ? 1 : 0,
       begindate: dto.reportDate,
     }
     if (!dto.reportId) {
       fields.opened = 'Y'
-      fields[DailyReportCodes.client] = positiveId(task?.[TaskCodes.client]) ?? 0
-      fields[DailyReportCodes.project] = positiveId(task?.[TaskCodes.project]) ?? 0
     }
     return { entityTypeId: EntityTypeIds.reports, fields }
   }

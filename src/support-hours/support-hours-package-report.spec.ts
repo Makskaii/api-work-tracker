@@ -4,6 +4,8 @@ import type { SupportHoursPackage } from './entities/support-hours-package.entit
 import { buildSupportPackageReportData, SupportHoursPackageReportService } from './support-hours-package-report.service'
 import { SupportHoursPackagesController } from './support-hours-packages.controller'
 import { SupportHoursPackagesService } from './support-hours-packages.service'
+import type { SupportHoursReport } from './entities/support-hours-report.entity'
+import type { SupportHoursPackageReportSnapshot, SupportPackageTaskContext } from './support-hours-package-report.types'
 
 const now = new Date('2026-09-29T08:00:00Z')
 function consumption(id: number, hours: number, overrides: Record<string, unknown> = {}): SupportHoursConsumption {
@@ -84,11 +86,73 @@ describe('Selected support hours package report data', () => {
   })
 })
 
+describe('Task progress across support packages', () => {
+  function fixture(status: SupportPackageTaskContext['status'] = 'in_work', soldHours: number | null = 30): SupportHoursPackageReportSnapshot {
+    const selected = consumption(1, 6, { hours: 20 })
+    const reports = [
+      { ...selected.report, consumptions: [{ packageId: 9, hours: 14 }, { packageId: 10, hours: 6 }] },
+      { ...consumption(2, 6, { hours: 6 }).report, consumptions: [{ packageId: 9, hours: 6 }] },
+    ] as SupportHoursReport[]
+    return { ...packageFixture([selected]), taskContexts: [{ id: '1002', title: 'Общая задача', status, soldHours, reports }] }
+  }
+
+  it('shows 26/30 for all unique task reports while charging only the selected 6 hours', () => {
+    const data = buildSupportPackageReportData(fixture(), now)
+    expect(data).toMatchObject({ spentHours: 6, remainingHours: 34 })
+    expect(data.tasks[0]).toMatchObject({ title: 'Общая задача', status: 'in_work', totalHours: 26, soldHours: 30, hours: 6 })
+    expect(data.tasks[0].otherPackageReports).toEqual([
+      expect.objectContaining({ id: '1', packageId: 9, hours: 14 }),
+      expect.objectContaining({ id: '2', packageId: 9, hours: 6 }),
+    ])
+    expect(data.tasks[0].reports).toEqual([expect.objectContaining({ id: '1', hours: 6 })])
+  })
+
+  it('uses current completed status even when completion work was charged to another package', () => {
+    const snapshot = fixture('completed')
+    snapshot.taskContexts[0].reports[1].consumptions[0].packageId = 11
+    const data = buildSupportPackageReportData(snapshot, now)
+    expect(data.tasks[0].status).toBe('completed')
+    expect(data.tasks[0].otherPackageReports[1]).toMatchObject({ packageId: 11, hours: 6 })
+    expect(data.spentHours).toBe(6)
+  })
+
+  it('does not turn reaching or exceeding the hours limit into task completion', () => {
+    const data = buildSupportPackageReportData(fixture('in_work', 20), now)
+    expect(data.tasks[0]).toMatchObject({ status: 'in_work', totalHours: 26, soldHours: 20 })
+  })
+
+  it('keeps missing budget different from a real zero', () => {
+    expect(buildSupportPackageReportData(fixture('in_work', null), now).tasks[0].soldHours).toBeNull()
+    expect(buildSupportPackageReportData(fixture('in_work', 0), now).tasks[0].soldHours).toBe(0)
+  })
+
+  it('excludes future work from task progress and does not pull unrelated tasks into the package', () => {
+    const snapshot = fixture()
+    snapshot.taskContexts[0].reports[1].reportDate = new Date('2026-09-29T21:00:00Z')
+    snapshot.taskContexts.push({ ...snapshot.taskContexts[0], id: '999' })
+    const data = buildSupportPackageReportData(snapshot, now)
+    expect(data.tasks).toHaveLength(1)
+    expect(data.tasks[0].totalHours).toBe(20)
+    expect(data.tasks[0].otherPackageReports).toHaveLength(1)
+  })
+
+  it('does not count one report twice when package allocations split its hours', () => {
+    const snapshot = fixture()
+    snapshot.taskContexts[0].reports.push(snapshot.taskContexts[0].reports[0])
+    snapshot.taskContexts[0].reports[0].consumptions = [
+      { packageId: 9, hours: 7 }, { packageId: 9, hours: 7 }, { packageId: 10, hours: 6 },
+    ] as SupportHoursConsumption[]
+    const task = buildSupportPackageReportData(snapshot, now).tasks[0]
+    expect(task.totalHours).toBe(26)
+    expect(task.otherPackageReports[0].hours).toBe(14)
+  })
+})
+
 describe('Fresh serialized package snapshot', () => {
   function fixture() {
     const calls: string[] = []
     const packagesRepository = { findOne: jest.fn(() => { calls.push('exists'); return Promise.resolve(packageFixture([consumption(80, 80)])) }) }
-    const snapshotRepository = { findOne: jest.fn(() => { calls.push('snapshot'); return Promise.resolve(packageFixture([consumption(1, 7)])) }) }
+    const snapshotRepository = { findOne: jest.fn(() => { calls.push('snapshot'); return Promise.resolve(packageFixture([consumption(1, 7, { bitrixTaskId: null })])) }) }
     const dataSource = { transaction: jest.fn((operation) => { calls.push('transaction'); return operation({ getRepository: () => snapshotRepository }) }) }
     const service = new SupportHoursPackagesService({} as never, packagesRepository as never, {} as never, {} as never, dataSource as never, {} as never)
     const sync = jest.spyOn(service, 'sync').mockImplementation(() => {

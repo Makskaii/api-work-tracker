@@ -5,6 +5,10 @@ export type SupportPackageReportRow = {
   hours: number
 }
 
+export type SupportPackageOtherReportRow = SupportPackageReportRow & {
+  packageId: number
+}
+
 export type SupportPackageReportData = {
   projectTitle: string
   clientName: string | null
@@ -18,7 +22,11 @@ export type SupportPackageReportData = {
     id: string
     title: string
     hours: number
+    status: 'in_work' | 'completed' | 'cancelled' | 'unknown'
+    soldHours: number | null
+    totalHours: number
     reports: SupportPackageReportRow[]
+    otherPackageReports: SupportPackageOtherReportRow[]
   }>
   reportsWithoutTask: SupportPackageReportRow[]
 }
@@ -27,7 +35,8 @@ const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (character) => (
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 }[character] ?? character))
 
-const hours = (value: number) => `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value)} ч`
+const number = (value: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value)
+const hours = (value: number) => `${number(value)} ч`
 const reportRows = (reports: SupportPackageReportRow[]) => reports.map((report) => `
   <tr>
     <td class="report-description">${escapeHtml(report.description || `Отчёт №${report.id}`)}</td>
@@ -41,16 +50,33 @@ const reportTable = (reports: SupportPackageReportRow[]) => `
     <tbody>${reportRows(reports)}</tbody>
   </table>`
 
+const taskStatus = (status: SupportPackageReportData['tasks'][number]['status']) => ({
+  in_work: 'В работе', completed: 'Выполнена', cancelled: 'Отменена', unknown: 'Статус недоступен',
+}[status])
+
+const otherPackageTable = (reports: SupportPackageOtherReportRow[]) => `
+  <p class="other-package-label">Работы, учтённые в других пакетах — в списания этого пакета не входят</p>
+  <table class="reports-table other-package-table">
+    <colgroup><col><col class="hours-column"></colgroup>
+    <thead><tr><th>Выполненные работы</th><th class="report-hours">Часы</th></tr></thead>
+    <tbody>${reports.map((report) => `<tr>
+      <td class="report-description">${escapeHtml(report.description || `Отчёт №${report.id}`)}<span class="allocation-note">Учтено в пакете №${escapeHtml(String(report.packageId))} · Не входит в этот пакет</span></td>
+      <td class="report-hours">${escapeHtml(hours(report.hours))}</td>
+    </tr>`).join('')}</tbody>
+  </table>`
+
 /** The report uses actual package charges, not task estimates or completion status. */
 export const buildSupportPackageReportHtml = (data: SupportPackageReportData, watermarkUrl?: string): string => {
   const reportCount = data.tasks.reduce((total, task) => total + task.reports.length, data.reportsWithoutTask.length)
   const tasksHtml = data.tasks.map((task, index) => `
     <section class="task-block">
       <div class="task-heading">
-        <h3>${index + 1}. ${escapeHtml(task.title)}</h3>
-        <strong>${escapeHtml(hours(task.hours))}</strong>
+        <h3>${index + 1}. ${escapeHtml(task.title)}<span class="task-status ${task.status}">${taskStatus(task.status)}</span></h3>
+        <strong>${escapeHtml(number(task.totalHours))} / ${task.soldHours === null ? '—' : escapeHtml(number(task.soldHours))} ч<small>всего / продано клиенту</small></strong>
       </div>
+      <p class="task-summary">Из выбранного пакета: ${escapeHtml(hours(task.hours))}${task.soldHours === null ? ' · Количество часов, проданных клиенту, не указано' : ''}</p>
       ${reportTable(task.reports)}
+      ${task.otherPackageReports.length ? otherPackageTable(task.otherPackageReports) : ''}
     </section>`).join('')
   // Only locally embedded artwork is allowed; report text cannot introduce remote resources.
   const watermark = watermarkUrl?.startsWith('data:image/')
@@ -82,6 +108,15 @@ export const buildSupportPackageReportHtml = (data: SupportPackageReportData, wa
     .task-heading { display: flex; align-items: flex-start; gap: 16px; margin: 0; padding: 9px 10px; background: #eef5f5; border: 1px solid #d5e1e1; border-bottom: 0; break-after: avoid; page-break-after: avoid; }
     h3 { flex: 1; min-width: 0; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
     .task-heading strong { white-space: nowrap; color: #316f74; }
+    .task-heading strong small { display: block; font-size: 9px; font-weight: 400; }
+    .task-status { display: inline-block; margin-left: 8px; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 400; white-space: nowrap; background: #e0ebf5; color: #285580; }
+    .task-status.completed { background: #dcefe4; color: #236b46; }
+    .task-status.unknown { background: #e7e7e7; color: #555; }
+    .task-status.cancelled { background: #f3e4e4; color: #8b4141; }
+    .task-summary { margin: 0; padding: 7px 10px; border: 1px solid #d5e1e1; border-bottom: 0; color: #555; font-size: 10px; break-after: avoid; page-break-after: avoid; }
+    .other-package-label { margin: 10px 0 0; padding: 7px 10px; border: 1px solid #ddd; border-bottom: 0; background: #f3f3f3; color: #555; font-size: 10px; break-after: avoid; page-break-after: avoid; }
+    .other-package-table { color: #555; }
+    .allocation-note { display: block; margin-top: 5px; color: #626970; font-size: 10px; }
     .reports-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     .hours-column { width: 70px; }
     .reports-table thead { display: table-header-group; }
@@ -102,7 +137,7 @@ export const buildSupportPackageReportHtml = (data: SupportPackageReportData, wa
   <p class="report-meta">Пакет №${data.packageId}</p>
   <table class="summary-table"><thead><tr><th>Объём пакета</th><th>Потрачено</th><th>Осталось</th></tr></thead>
   <tbody><tr><td>${escapeHtml(hours(data.purchasedHours))}</td><td>${escapeHtml(hours(data.spentHours))}</td><td class="${data.remainingHours < 0 ? 'negative' : ''}">${escapeHtml(hours(data.remainingHours))}</td></tr></tbody></table>
-  <p class="scope-note">Учтены списания из выбранного пакета. Если работа оплачена из нескольких пакетов, здесь показаны только часы этого пакета.</p>
+  <p class="scope-note">В итогах пакета учтены только его списания. Общие часы задач и работы из других пакетов приведены отдельно.</p>
   ${tasksHtml ? `<h2>Работы по задачам</h2>${tasksHtml}` : ''}
   ${data.reportsWithoutTask.length ? `<h2>Отдельные работы</h2>${reportTable(data.reportsWithoutTask)}` : ''}
   ${reportCount === 0 ? '<p class="empty">В этом пакете пока нет списаний за выполненные работы.</p>' : ''}

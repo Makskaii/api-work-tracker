@@ -11,6 +11,7 @@ import {
   type SupportPackageReportRow,
 } from '../shared/pdf/support-package-report.template'
 import type { SupportHoursPackage } from './entities/support-hours-package.entity'
+import type { SupportHoursPackageReportSnapshot } from './support-hours-package-report.types'
 import { SupportHoursPackagesService } from './support-hours-packages.service'
 
 dayjs.extend(utc)
@@ -22,7 +23,7 @@ const hoursValue = (value: unknown) => {
   return Number.isFinite(hours) ? hours : 0
 }
 
-export function buildSupportPackageReportData(item: SupportHoursPackage, now = new Date()): SupportPackageReportData {
+export function buildSupportPackageReportData(item: SupportHoursPackage & Partial<Pick<SupportHoursPackageReportSnapshot, 'taskContexts'>>, now = new Date()): SupportPackageReportData {
   const asOfDate = dayjs(now).tz(REPORT_TIMEZONE).format('YYYY-MM-DD')
   if (item.purchaseDate > asOfDate) throw new BadRequestException('Cannot generate a current report for a future package')
   const reports = new Map<string, { row: SupportPackageReportRow; taskId: string | null; taskTitle: string | null }>()
@@ -71,11 +72,49 @@ export function buildSupportPackageReportData(item: SupportHoursPackage, now = n
       id: report.taskId,
       title: report.taskTitle || `Задача №${report.taskId}`,
       hours: 0,
+      status: 'unknown',
+      soldHours: null,
+      totalHours: 0,
       reports: [],
+      otherPackageReports: [],
     }
     task.reports.push(report.row)
     task.hours = roundHours(task.hours + report.row.hours)
+    task.totalHours = task.hours
     tasks.set(report.taskId, task)
+  }
+  for (const context of item.taskContexts ?? []) {
+    const task = tasks.get(context.id)
+    // A task appears only when the selected package has charges for it.
+    if (!task) continue
+    task.title = context.title || task.title
+    task.status = context.status
+    task.soldHours = context.soldHours
+    const relatedReports = new Map(context.reports.map((report) => [report.bitrixReportId || String(report.id), report]))
+    let totalHours = 0
+    for (const [id, report] of relatedReports) {
+      const reportDay = dayjs(report.reportDate)
+      if (!reportDay.isValid()) continue
+      const date = reportDay.tz(REPORT_TIMEZONE).format('YYYY-MM-DD')
+      if (date > asOfDate) continue
+      // Count a report once even when several packages pay portions of it.
+      totalHours = roundHours(totalHours + hoursValue(report.hours))
+      const allocations = new Map<number, number>()
+      for (const allocation of report.consumptions ?? []) {
+        const packageId = Number(allocation.packageId)
+        const allocatedHours = hoursValue(allocation.hours)
+        if (!Number.isSafeInteger(packageId) || packageId <= 0 || packageId === Number(item.id) || allocatedHours <= 0) continue
+        allocations.set(packageId, roundHours((allocations.get(packageId) ?? 0) + allocatedHours))
+      }
+      for (const [packageId, allocatedHours] of allocations) {
+        task.otherPackageReports.push({
+          id, date, packageId, hours: allocatedHours,
+          description: report.reportDescription?.trim() || report.reportTitle?.trim() || `Отчёт №${id}`,
+        })
+      }
+    }
+    task.totalHours = totalHours
+    task.otherPackageReports.sort((first, second) => first.date.localeCompare(second.date) || first.id.localeCompare(second.id, undefined, { numeric: true }) || first.packageId - second.packageId)
   }
   const spentHours = roundHours(ordered.reduce((sum, report) => sum + report.row.hours, 0))
   const purchasedHours = hoursValue(item.purchasedHours)

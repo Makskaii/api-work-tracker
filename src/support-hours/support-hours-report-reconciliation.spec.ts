@@ -4,6 +4,9 @@ import { ReportProjectType } from '../project-reports/entities/project-report-pr
 import { SupportHoursConsumption } from './entities/support-hours-consumption.entity'
 import { SupportHoursPackage } from './entities/support-hours-package.entity'
 import { SupportHoursReport } from './entities/support-hours-report.entity'
+import { SupportHoursAssignment } from './entities/support-hours-assignment.entity'
+import { SupportTaskAssignment } from './entities/support-task-assignment.entity'
+import { SupportHoursTransfer } from './entities/support-hours-transfer.entity'
 import { SupportHoursPackagesService } from './support-hours-packages.service'
 
 const SUPPORT_FLAG = 'ufCrm11_1776177558677'
@@ -71,10 +74,13 @@ function fixture(initialReports = [cachedReport()]) {
       if (entity === SupportHoursReport) return reportsRepository
       if (entity === SupportHoursPackage) return packagesRepository
       if (entity === SupportHoursConsumption) return consumptionsRepository
+      if (entity === SupportHoursAssignment || entity === SupportTaskAssignment) return { find: jest.fn().mockResolvedValue([]) }
+      if (entity === SupportHoursTransfer) return { findOne: jest.fn().mockResolvedValue(null) }
       throw new Error('Unexpected repository')
     },
   }
   const dataSource = {
+    getRepository: manager.getRepository,
     transaction: jest.fn(async (operation) => {
       const snapshot = structuredClone({ reports, consumptions })
       try { return await operation(manager) }

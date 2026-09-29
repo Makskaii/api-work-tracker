@@ -4,6 +4,9 @@ import { ReportProjectType } from '../project-reports/entities/project-report-pr
 import { SupportHoursConsumption } from './entities/support-hours-consumption.entity'
 import { SupportHoursPackage } from './entities/support-hours-package.entity'
 import { SupportHoursReport } from './entities/support-hours-report.entity'
+import { SupportHoursAssignment } from './entities/support-hours-assignment.entity'
+import { SupportTaskAssignment } from './entities/support-task-assignment.entity'
+import { SupportHoursTransfer } from './entities/support-hours-transfer.entity'
 import { SupportHoursPackagesService } from './support-hours-packages.service'
 
 const project = { id: 1, bitrixProjectId: '101', title: 'Support project', projectType: ReportProjectType.Support }
@@ -60,10 +63,12 @@ function fixture(options: { packages?: number[]; reports?: SupportHoursReport[] 
     if (entity === SupportHoursReport) return repo
     if (entity === SupportHoursPackage) return packageRepo
     if (entity === SupportHoursConsumption) return consumptionRepo
+    if (entity === SupportHoursAssignment || entity === SupportTaskAssignment) return { find: jest.fn().mockResolvedValue([]) }
+    if (entity === SupportHoursTransfer) return { findOne: jest.fn().mockResolvedValue(null) }
     throw new Error('Unexpected repository')
   } }
   let insideTransaction = false
-  const source = { transaction: jest.fn(async (operation) => {
+  const source = { getRepository: manager.getRepository, transaction: jest.fn(async (operation) => {
     const snapshot = structuredClone({ reports, consumptions })
     insideTransaction = true
     try { return await operation(manager) }
@@ -104,7 +109,7 @@ describe('Support project analyst workspace', () => {
     }))
     expect(result.reports).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: '1', hours: 5, allocations: [], allocatedHours: 0, unallocatedHours: 5, date: '2025-01-01' }),
-      expect.objectContaining({ id: '2', hours: 3, includeInPackage: false, allocations: [], unallocatedHours: 0 }),
+      expect.objectContaining({ id: '2', hours: 3, includeInPackage: false, allocations: [], unallocatedHours: 3 }),
     ]))
     expect(result.tasks.map((item) => item.id)).toEqual(['10', '11'])
     expect(result.packageGroup).toMatchObject({ purchasedHours: 0, consumedHours: 0, remainingHours: 0, packages: [] })
@@ -164,7 +169,7 @@ describe('Support project analyst workspace', () => {
     f.setReports([liveReport(1, 2, { [DailyReportCodes.includeInPackage]: 'N', [DailyReportCodes.parentId]: 10 })])
     f.setTasks([task(10)])
     const result = await f.service.getProjectWorkspace(1)
-    expect(result.reports[0]).toMatchObject({ taskId: '10', includeInPackage: false, unallocatedHours: 0 })
+    expect(result.reports[0]).toMatchObject({ taskId: '10', includeInPackage: false, unallocatedHours: 2 })
     expect(result.packageGroup.consumedHours).toBe(0)
   })
 

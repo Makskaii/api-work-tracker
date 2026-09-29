@@ -2,6 +2,9 @@ import { ReportProjectType } from '../project-reports/entities/project-report-pr
 import { SupportHoursConsumption } from './entities/support-hours-consumption.entity'
 import { SupportHoursPackage } from './entities/support-hours-package.entity'
 import { SupportHoursReport } from './entities/support-hours-report.entity'
+import { SupportHoursAssignment } from './entities/support-hours-assignment.entity'
+import { SupportTaskAssignment } from './entities/support-task-assignment.entity'
+import { SupportHoursTransfer } from './entities/support-hours-transfer.entity'
 import { SupportHoursPackagesService } from './support-hours-packages.service'
 
 function fixture() {
@@ -11,14 +14,14 @@ function fixture() {
       { id: 1, projectId: 1, purchasedHours: 10, purchaseDate: '2026-09-01', comment: 'Keep this comment', amount: null },
       { id: 2, projectId: 1, purchasedHours: 10, purchaseDate: '2026-09-15', comment: null as string | null, amount: null },
     ],
-    reports: [{ id: 1, projectId: 1, hours: 12, reportDate: new Date('2026-09-10') }],
+    reports: [{ id: 1, bitrixReportId: '1', projectId: 1, hours: 12, reportDate: new Date('2026-09-10') }],
     consumptions: [{ reportId: 1, packageId: 1, hours: 10 }, { reportId: 1, packageId: 2, hours: 2 }],
   }
   let activeTransaction = false
   const assertTransaction = () => { expect(activeTransaction).toBe(true) }
   const packageRepository = {
     create: jest.fn((value) => { assertTransaction(); return { id: 3, ...value } }),
-    findOne: jest.fn(({ where }) => { assertTransaction(); return Promise.resolve(structuredClone(state.packages.find((item) => item.id === where.id))) }),
+    findOne: jest.fn(({ where }) => Promise.resolve(structuredClone(state.packages.find((item) => item.id === where.id)))),
     find: jest.fn(({ where }) => { assertTransaction(); return Promise.resolve(structuredClone(state.packages.filter((item) => item.projectId === where.projectId).sort((a, b) => a.purchaseDate.localeCompare(b.purchaseDate) || a.id - b.id))) }),
     save: jest.fn((item) => {
       assertTransaction()
@@ -44,9 +47,11 @@ function fixture() {
     if (entity === SupportHoursPackage) return packageRepository
     if (entity === SupportHoursReport) return reportRepository
     if (entity === SupportHoursConsumption) return consumptionRepository
+    if (entity === SupportHoursAssignment || entity === SupportTaskAssignment) return { find: jest.fn().mockResolvedValue([]) }
+    if (entity === SupportHoursTransfer) return { findOne: jest.fn().mockResolvedValue(null) }
     throw new Error('Unexpected repository')
   } }
-  const dataSource = { transaction: jest.fn(async (operation) => {
+  const dataSource = { getRepository: manager.getRepository, transaction: jest.fn(async (operation) => {
     const before = structuredClone(state)
     activeTransaction = true
     try {

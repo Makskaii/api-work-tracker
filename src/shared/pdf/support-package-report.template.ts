@@ -27,6 +27,7 @@ export type SupportPackageReportData = {
     totalHours: number
     reports: SupportPackageReportRow[]
     otherPackageReports: SupportPackageOtherReportRow[]
+    unallocatedReports?: SupportPackageReportRow[]
   }>
   reportsWithoutTask: SupportPackageReportRow[]
 }
@@ -65,6 +66,17 @@ const otherPackageTable = (reports: SupportPackageOtherReportRow[]) => `
     </tr>`).join('')}</tbody>
   </table>`
 
+const unallocatedTable = (reports: SupportPackageReportRow[]) => `
+  <p class="other-package-label">Работы, не распределённые по пакетам</p>
+  <table class="reports-table other-package-table">
+    <colgroup><col><col class="hours-column"></colgroup>
+    <thead><tr><th>Выполненные работы</th><th class="report-hours">Часы</th></tr></thead>
+    <tbody>${reports.map((report) => `<tr>
+      <td class="report-description">${escapeHtml(report.description || `Отчёт №${report.id}`)}<span class="allocation-note">Не распределено по пакетам; в итог пакета не входит</span></td>
+      <td class="report-hours">${escapeHtml(hours(report.hours))}</td>
+    </tr>`).join('')}</tbody>
+  </table>`
+
 /** The report uses actual package charges, not task estimates or completion status. */
 export const buildSupportPackageReportHtml = (data: SupportPackageReportData, watermarkUrl?: string): string => {
   const reportCount = data.tasks.reduce((total, task) => total + task.reports.length, data.reportsWithoutTask.length)
@@ -77,6 +89,7 @@ export const buildSupportPackageReportHtml = (data: SupportPackageReportData, wa
       <p class="task-summary">Из выбранного пакета: ${escapeHtml(hours(task.hours))}${task.soldHours === null ? ' · Общий лимит часов по задаче не указан' : ''}</p>
       ${reportTable(task.reports)}
       ${task.otherPackageReports.length ? otherPackageTable(task.otherPackageReports) : ''}
+      ${task.unallocatedReports?.length ? unallocatedTable(task.unallocatedReports) : ''}
     </section>`).join('')
   // Only locally embedded artwork is allowed; report text cannot introduce remote resources.
   const watermark = watermarkUrl?.startsWith('data:image/')
@@ -137,7 +150,7 @@ export const buildSupportPackageReportHtml = (data: SupportPackageReportData, wa
   <p class="report-meta">Пакет №${data.packageId}</p>
   <table class="summary-table"><thead><tr><th>Объём пакета</th><th>Потрачено</th><th>Осталось</th></tr></thead>
   <tbody><tr><td>${escapeHtml(hours(data.purchasedHours))}</td><td>${escapeHtml(hours(data.spentHours))}</td><td class="${data.remainingHours < 0 ? 'negative' : ''}">${escapeHtml(hours(data.remainingHours))}</td></tr></tbody></table>
-  <p class="scope-note">В итогах пакета учтены только его списания. Общие часы задач и работы из других пакетов приведены отдельно.</p>
+  <p class="scope-note">В итогах пакета учтены только его списания. Общие часы задач, работы из других пакетов и нераспределённые часы приведены отдельно.</p>
   ${tasksHtml ? `<h2>Работы по задачам</h2>${tasksHtml}` : ''}
   ${data.reportsWithoutTask.length ? `<h2>Отдельные работы</h2>${reportTable(data.reportsWithoutTask)}` : ''}
   ${reportCount === 0 ? '<p class="empty">В этом пакете пока нет списаний за выполненные работы.</p>' : ''}

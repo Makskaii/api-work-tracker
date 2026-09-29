@@ -309,7 +309,9 @@ export class SupportHoursPackagesService {
       const projectIds = new Set<number>()
       if (existing) projectIds.add(existing.projectId)
       if (prepared) {
-        await repository.save(repository.create({ ...existing, ...prepared, bitrixReportId }))
+        // Fresh TypeORM entities have own undefined fields; merge preserves the existing primary key and timestamps.
+        const entity = repository.merge(existing ?? repository.create({ bitrixReportId }), prepared)
+        await repository.save(entity)
         projectIds.add(prepared.projectId)
       } else if (existing) {
         await repository.remove(existing)

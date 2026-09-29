@@ -3,12 +3,14 @@ import { DailyReportCodes } from '../constants/const'
 import type { ReportProject } from '../project-reports/entities/project-report-project.entity'
 import type { SupportHoursPackage } from './entities/support-hours-package.entity'
 
-export type SupportWorkspaceTask = { id: string; title: string; stageId: string | null }
+export type SupportWorkspaceTask = { id: string; title: string; stageId: string | null; purchaseId?: number | null }
 export type SupportWorkspaceReport = {
   id: string
   taskId: string | null
   taskTitle: string | null
   responsibleName: string | null
+  companyName?: string | null
+  activityTitle?: string | null
   date: string
   hours: number
   title: string | null

@@ -78,6 +78,7 @@ export function buildSupportPackageReportData(item: SupportHoursPackage & Partia
       totalHours: 0,
       reports: [],
       otherPackageReports: [],
+      unallocatedReports: [],
     }
     task.reports.push(report.row)
     task.hours = roundHours(task.hours + report.row.hours)
@@ -101,12 +102,20 @@ export function buildSupportPackageReportData(item: SupportHoursPackage & Partia
       // Count a report once even when several packages pay portions of it.
       totalHours = roundHours(totalHours + hoursValue(report.hours))
       const allocations = new Map<number, number>()
+      let allocatedTotal = 0
       for (const allocation of report.consumptions ?? []) {
         const packageId = Number(allocation.packageId)
         const allocatedHours = hoursValue(allocation.hours)
-        if (!Number.isSafeInteger(packageId) || packageId <= 0 || packageId === Number(item.id) || allocatedHours <= 0) continue
+        if (!Number.isSafeInteger(packageId) || packageId <= 0 || allocatedHours <= 0) continue
+        allocatedTotal += allocatedHours
+        if (packageId === Number(item.id)) continue
         allocations.set(packageId, roundHours((allocations.get(packageId) ?? 0) + allocatedHours))
       }
+      const unallocatedHours = roundHours(Math.max(0, hoursValue(report.hours) - allocatedTotal))
+      if (unallocatedHours > 0) task.unallocatedReports!.push({
+        id, date, hours: unallocatedHours,
+        description: report.reportDescription?.trim() || report.reportTitle?.trim() || `Отчёт №${id}`,
+      })
       for (const [packageId, allocatedHours] of allocations) {
         task.otherPackageReports.push({
           id, date, packageId, hours: allocatedHours,
@@ -116,6 +125,7 @@ export function buildSupportPackageReportData(item: SupportHoursPackage & Partia
     }
     task.totalHours = totalHours
     task.otherPackageReports.sort((first, second) => first.date.localeCompare(second.date) || first.id.localeCompare(second.id, undefined, { numeric: true }) || first.packageId - second.packageId)
+    task.unallocatedReports!.sort((first, second) => first.date.localeCompare(second.date) || first.id.localeCompare(second.id, undefined, { numeric: true }))
   }
   const spentHours = roundHours(ordered.reduce((sum, report) => sum + report.row.hours, 0))
   const purchasedHours = hoursValue(item.purchasedHours)

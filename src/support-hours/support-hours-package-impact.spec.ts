@@ -6,6 +6,9 @@ import { UpdateSupportHoursPackageDto } from './dto/update-support-hours-package
 import { SupportHoursConsumption } from './entities/support-hours-consumption.entity'
 import { SupportHoursPackage } from './entities/support-hours-package.entity'
 import { SupportHoursReport } from './entities/support-hours-report.entity'
+import { SupportHoursAssignment } from './entities/support-hours-assignment.entity'
+import { SupportTaskAssignment } from './entities/support-task-assignment.entity'
+import { SupportHoursTransfer } from './entities/support-hours-transfer.entity'
 import { SupportHoursPackageImpactService } from './support-hours-package-impact.service'
 import { SupportHoursPackagesService } from './support-hours-packages.service'
 
@@ -15,7 +18,7 @@ const pack = (id: number, purchasedHours: number, purchaseDate = '2026-09-01'): 
   updatedAt: new Date('2026-09-01T08:00:00Z'),
 })
 const report = (id: number, hours: number, reportDate = '2026-09-10T08:00:00Z'): SupportHoursReport => Object.assign(new SupportHoursReport(), {
-  id, projectId: 10, hours, reportDate: new Date(reportDate),
+  id, bitrixReportId: String(id), projectId: 10, hours, reportDate: new Date(reportDate),
 })
 
 function fixture(
@@ -34,18 +37,25 @@ function fixture(
     save: jest.fn(), remove: jest.fn(), update: jest.fn(), delete: jest.fn(),
   }
   const consumptionRepo = { create: jest.fn((value) => value), delete: jest.fn().mockResolvedValue({}), save: jest.fn().mockResolvedValue([]) }
+  const assignments: SupportHoursAssignment[] = []
+  const taskAssignments: SupportTaskAssignment[] = []
+  const assignmentRepo = { find: jest.fn(async () => assignments) }
+  const taskAssignmentRepo = { find: jest.fn(async () => taskAssignments) }
   const manager = {
     getRepository: (entity: unknown) => {
       if (entity === SupportHoursPackage) return packageRepo
       if (entity === SupportHoursReport) return reportRepo
       if (entity === SupportHoursConsumption) return consumptionRepo
+      if (entity === SupportHoursAssignment) return assignmentRepo
+      if (entity === SupportTaskAssignment) return taskAssignmentRepo
+      if (entity === SupportHoursTransfer) return { findOne: jest.fn().mockResolvedValue(null) }
       throw new Error('Unexpected repository')
     },
   }
-  const dataSource = { transaction: jest.fn(async (operation) => await operation(manager)) }
+  const dataSource = { getRepository: manager.getRepository, transaction: jest.fn(async (operation) => await operation(manager)) }
   return {
     service: new SupportHoursPackageImpactService(dataSource as never),
-    packages, reports, rows, packageRepo, reportRepo, consumptionRepo, dataSource,
+    packages, reports, rows, packageRepo, reportRepo, consumptionRepo, dataSource, assignments, taskAssignments,
   }
 }
 
@@ -224,5 +234,39 @@ describe('Support package edit and deletion impact', () => {
     expect(assertPreview).toHaveBeenCalledTimes(2)
     expect(context.packageRepo.save).toHaveBeenCalledTimes(1)
     expect(context.packages[0].purchasedHours).toBe(10)
+  })
+
+  it('leaves manual work unallocated after its target package is deleted rather than moving it by FIFO', async () => {
+    const context = fixture([pack(1, 10), pack(2, 10)], [report(1, 4)], [{ packageId: 1, reportId: 1, hours: 4 }])
+    context.assignments.push(Object.assign(new SupportHoursAssignment(), { projectId: 10, bitrixReportId: '1', allocations: [{ packageId: 1, hours: 4 }] }))
+    const result = await context.service.preview(1, { operation: 'delete' })
+    expect(result).toMatchObject({ movedHours: 4, unallocatedHoursAfter: 4, packages: [{ id: 1, after: null }, { id: 2, after: { consumedHours: 0, remainingHours: 10 } }] })
+    expect(context.assignments[0].allocations).toEqual([{ packageId: 1, hours: 4 }])
+  })
+
+  it('caps manual work at the reduced package capacity while preserving an unallocated remainder', async () => {
+    const context = fixture([pack(1, 10)], [report(1, 5)], [{ packageId: 1, reportId: 1, hours: 5 }])
+    context.assignments.push(Object.assign(new SupportHoursAssignment(), { projectId: 10, bitrixReportId: '1', allocations: [{ packageId: 1, hours: 5 }] }))
+    expect(await context.service.preview(1, { operation: 'update', changes: { purchasedHours: 3 } })).toMatchObject({
+      movedHours: 2, unallocatedHoursAfter: 2, packages: [{ id: 1, after: { consumedHours: 3, remainingHours: 0 } }],
+    })
+  })
+
+  it('requires confirmation before removing a package with an empty-task future assignment', async () => {
+    const context = fixture([pack(1, 10)], [], [])
+    context.taskAssignments.push(Object.assign(new SupportTaskAssignment(), { projectId: 10, bitrixTaskId: '100', packageId: 1 }))
+    expect(await context.service.preview(1, { operation: 'delete' })).toMatchObject({ requiresConfirmation: true, movedHours: 0 })
+    await expect(context.service.assertPreview(1, { operation: 'delete' })).rejects.toBeInstanceOf(ConflictException)
+  })
+
+  it('invalidates a preview after report allocations or a future task destination change', async () => {
+    const context = fixture()
+    const request = { operation: 'update' as const, changes: { comment: 'Note' } }
+    const before = await context.service.preview(1, request)
+    context.assignments.push(Object.assign(new SupportHoursAssignment(), { projectId: 10, bitrixReportId: '1', allocations: [] }))
+    await expect(context.service.assertPreview(1, request, before.fingerprint)).rejects.toBeInstanceOf(ConflictException)
+    const next = await context.service.preview(1, request)
+    context.taskAssignments.push(Object.assign(new SupportTaskAssignment(), { projectId: 10, bitrixTaskId: '100', packageId: 2 }))
+    await expect(context.service.assertPreview(1, request, next.fingerprint)).rejects.toBeInstanceOf(ConflictException)
   })
 })

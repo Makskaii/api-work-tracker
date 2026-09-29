@@ -55,4 +55,17 @@ describe('support package PDF content', () => {
     expect(html).toContain('&lt;img src=&quot;https://example.test/private&quot;&gt;')
     expect(html).toContain('\nNext line &amp; detail')
   })
+
+  it('labels unallocated task work separately from package charges, without dates or unsafe HTML', () => {
+    const html = buildSupportPackageReportHtml({ ...sample, tasks: [{ ...sample.tasks[0], totalHours: 29,
+      unallocatedReports: [{ id: '4', date: '2026-09-29', description: '<script>Pending</script>', hours: 3 }],
+    }] })
+    expect(html).toContain('29 / 30 ч')
+    expect(html).toContain('Не распределено по пакетам; в итог пакета не входит')
+    expect(html).toContain('&lt;script&gt;Pending&lt;/script&gt;')
+    expect(html).not.toContain('<script>')
+    expect(html).not.toContain('2026-09-29')
+    expect(html).toContain('Из выбранного пакета: 7 ч')
+    expect(html).toContain('14,5 ч')
+  })
 })

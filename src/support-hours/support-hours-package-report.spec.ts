@@ -5,6 +5,7 @@ import { buildSupportPackageReportData, SupportHoursPackageReportService } from 
 import { SupportHoursPackagesController } from './support-hours-packages.controller'
 import { SupportHoursPackagesService } from './support-hours-packages.service'
 import type { SupportHoursReport } from './entities/support-hours-report.entity'
+import { SupportHoursTransfer } from './entities/support-hours-transfer.entity'
 import type { SupportHoursPackageReportSnapshot, SupportPackageTaskContext } from './support-hours-package-report.types'
 
 const now = new Date('2026-09-29T08:00:00Z')
@@ -146,6 +147,34 @@ describe('Task progress across support packages', () => {
     expect(task.totalHours).toBe(26)
     expect(task.otherPackageReports[0].hours).toBe(14)
   })
+
+  it('includes fully unallocated eligible work in task progress without charging the selected package', () => {
+    const snapshot = fixture()
+    snapshot.taskContexts[0].reports.push({ ...consumption(3, 4, { hours: 4 }).report, consumptions: [] } as SupportHoursReport)
+    const data = buildSupportPackageReportData(snapshot, now)
+    expect(data).toMatchObject({ spentHours: 6, remainingHours: 34 })
+    expect(data.tasks[0]).toMatchObject({ totalHours: 30, hours: 6, unallocatedReports: [{ id: '3', hours: 4 }] })
+  })
+
+  it('shows only the unallocated remainder of a partially split report', () => {
+    const snapshot = fixture()
+    snapshot.taskContexts[0].reports[0].hours = 23
+    const data = buildSupportPackageReportData(snapshot, now)
+    expect(data.tasks[0]).toMatchObject({ totalHours: 29, hours: 6, unallocatedReports: [{ id: '1', hours: 3 }] })
+    expect(data.tasks[0].reports[0].hours).toBe(6)
+    expect(data.tasks[0].otherPackageReports[0].hours).toBe(14)
+    expect(data.spentHours).toBe(6)
+  })
+
+  it('deduplicates unallocated work and excludes future unallocated reports', () => {
+    const snapshot = fixture()
+    const unallocated = { ...consumption(3, 4, { hours: 4 }).report, consumptions: [] } as SupportHoursReport
+    snapshot.taskContexts[0].reports.push(unallocated, unallocated, { ...unallocated, bitrixReportId: '4', reportDate: new Date('2026-09-30T10:00:00Z') })
+    const task = buildSupportPackageReportData(snapshot, now).tasks[0]
+    expect(task.totalHours).toBe(30)
+    expect(task.unallocatedReports).toHaveLength(1)
+    expect(task.unallocatedReports![0]).toMatchObject({ id: '3', hours: 4 })
+  })
 })
 
 describe('Fresh serialized package snapshot', () => {
@@ -153,7 +182,13 @@ describe('Fresh serialized package snapshot', () => {
     const calls: string[] = []
     const packagesRepository = { findOne: jest.fn(() => { calls.push('exists'); return Promise.resolve(packageFixture([consumption(80, 80)])) }) }
     const snapshotRepository = { findOne: jest.fn(() => { calls.push('snapshot'); return Promise.resolve(packageFixture([consumption(1, 7, { bitrixTaskId: null })])) }) }
-    const dataSource = { transaction: jest.fn((operation) => { calls.push('transaction'); return operation({ getRepository: () => snapshotRepository }) }) }
+    const dataSource = {
+      getRepository: (entity: unknown) => {
+        if (entity === SupportHoursTransfer) return { findOne: jest.fn().mockResolvedValue(null) }
+        throw new Error('Unexpected repository')
+      },
+      transaction: jest.fn((operation) => { calls.push('transaction'); return operation({ getRepository: () => snapshotRepository }) }),
+    }
     const service = new SupportHoursPackagesService({} as never, packagesRepository as never, {} as never, {} as never, dataSource as never, {} as never)
     const sync = jest.spyOn(service, 'sync').mockImplementation(() => {
       calls.push('sync')
@@ -165,7 +200,7 @@ describe('Fresh serialized package snapshot', () => {
   it('awaits reconciliation then reads the selected package, removing deleted cached hours', async () => {
     const f = fixture()
     const snapshot = await f.service.getReportSnapshot(10)
-    expect(f.calls).toEqual(['exists', 'sync', 'transaction', 'snapshot'])
+    expect(f.calls).toEqual(['exists', 'sync', 'exists', 'transaction', 'snapshot'])
     expect(f.snapshotRepository.findOne).toHaveBeenCalledWith({ where: { id: 10 }, relations: { project: true, consumptions: { report: true } } })
     expect(buildSupportPackageReportData(snapshot, now).spentHours).toBe(7)
   })

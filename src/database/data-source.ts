@@ -17,6 +17,9 @@ import { ReportProjectFile } from '../project-reports/entities/report-project-fi
 import { SupportHoursConsumption } from '../support-hours/entities/support-hours-consumption.entity'
 import { SupportHoursPackage } from '../support-hours/entities/support-hours-package.entity'
 import { SupportHoursReport } from '../support-hours/entities/support-hours-report.entity'
+import { SupportHoursAssignment } from '../support-hours/entities/support-hours-assignment.entity'
+import { SupportTaskAssignment } from '../support-hours/entities/support-task-assignment.entity'
+import { SupportHoursTransfer } from '../support-hours/entities/support-hours-transfer.entity'
 
 export default new DataSource({
   type: 'mysql',
@@ -43,8 +46,10 @@ export default new DataSource({
     SupportHoursReport,
     SupportHoursConsumption,
     SupportHoursReportVersion,
+    SupportHoursAssignment,
+    SupportTaskAssignment,
+    SupportHoursTransfer,
   ],
   migrations: [__dirname + '/migrations/**/*{.ts,.js}'],
   synchronize: false,
 })
-

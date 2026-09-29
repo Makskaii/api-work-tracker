@@ -1,3 +1,4 @@
+import { TransferSupportHoursDto } from './dto/transfer-support-hours.dto'
 import { PreviewSupportHoursPackageDto } from './dto/preview-support-hours-package.dto'
 import { SupportHoursPackageImpactService } from './support-hours-package-impact.service'
 import { CreateSupportReportVersionDto } from './dto/create-support-report-version.dto'
@@ -41,6 +42,26 @@ export class SupportHoursPackagesController {
   @Header('Cache-Control', 'no-store')
   getProjectWorkspace(@Param('id', ParseIntPipe) id: number) {
     return this.service.getProjectWorkspace(id)
+  }
+
+  @Post('projects/:id/transfers/preview')
+  previewTransfer(@Param('id', ParseIntPipe) id: number, @Body() dto: TransferSupportHoursDto, @Headers('x-bitrix-token') token?: string) {
+    return this.service.previewTransfer(id, dto, token)
+  }
+
+  @Post('projects/:id/transfers')
+  transfer(@Param('id', ParseIntPipe) id: number, @Body() dto: TransferSupportHoursDto, @Headers('if-match') fingerprint?: string, @Headers('x-bitrix-token') token?: string, @Headers('idempotency-key') operationId?: string) {
+    return this.service.transfer(id, dto, fingerprint, token, operationId)
+  }
+
+  @Post('projects/:id/transfers/:operationId/resume')
+  resumeTransfer(@Param('id', ParseIntPipe) id: number, @Param('operationId') operationId: string, @Headers('x-bitrix-token') token?: string) {
+    return this.service.resumeTransfer(id, operationId, token)
+  }
+
+  @Post('projects/:id/transfers/:operationId/cancel')
+  cancelTransfer(@Param('id', ParseIntPipe) id: number, @Param('operationId') operationId: string, @Headers('x-bitrix-token') token?: string) {
+    return this.service.resumeTransfer(id, operationId, token, true)
   }
 
   @Get('reports/form-options')

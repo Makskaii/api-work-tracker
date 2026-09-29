@@ -4,6 +4,9 @@ import { ReportProjectType } from '../project-reports/entities/project-report-pr
 import { SupportHoursConsumption } from './entities/support-hours-consumption.entity'
 import { SupportHoursPackage } from './entities/support-hours-package.entity'
 import { SupportHoursReport } from './entities/support-hours-report.entity'
+import { SupportHoursAssignment } from './entities/support-hours-assignment.entity'
+import { SupportTaskAssignment } from './entities/support-task-assignment.entity'
+import { SupportHoursTransfer } from './entities/support-hours-transfer.entity'
 import { SupportHoursPackagesService } from './support-hours-packages.service'
 
 const FLAG = 'ufCrm11_1776177558677'
@@ -65,10 +68,12 @@ function fixture() {
       if (entity === SupportHoursPackage) return packageRepo
       if (entity === SupportHoursReport) return reportRepo
       if (entity === SupportHoursConsumption) return consumptionRepo
+      if (entity === SupportHoursAssignment || entity === SupportTaskAssignment) return { find: jest.fn().mockResolvedValue([]) }
+      if (entity === SupportHoursTransfer) return { findOne: jest.fn().mockResolvedValue(null) }
       throw new Error('Unexpected repository')
     },
   }
-  const dataSource = { transaction: jest.fn(async (operation) => { activeTransactions += 1; try { return await operation(manager) } finally { activeTransactions -= 1 } }) }
+  const dataSource = { getRepository: manager.getRepository, transaction: jest.fn(async (operation) => { activeTransactions += 1; try { return await operation(manager) } finally { activeTransactions -= 1 } }) }
   const projectRepo = { findOne: jest.fn(() => Promise.resolve(project)) }
   let history: ReturnType<typeof liveReport>[] = []
   let metadata = [{ id: '1002', title: 'Current task', stageId: TaskStageIds.testing as string, [TaskCodes.hours]: 30 as unknown }]

@@ -24,11 +24,13 @@ export class SupportHoursPackagesController {
   ) {}
 
   @Get()
+  @Header('Cache-Control', 'no-store')
   findAll() {
     return this.service.findAll()
   }
 
   @Get('projects')
+  @Header('Cache-Control', 'no-store')
   findSupportProjects() {
     return this.service.findSupportProjects()
   }
@@ -101,7 +103,7 @@ export class SupportHoursPackagesController {
 
   @Post('projects/sync')
   syncSupportProjects() {
-    return this.service.syncSupportProjects()
+    return this.service.syncSupportProjects(true)
   }
 
   @Get('reports/webhook')

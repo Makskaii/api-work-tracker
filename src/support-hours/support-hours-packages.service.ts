@@ -1,3 +1,4 @@
+import { synchronizeSupportProjectCatalogue } from './support-hours-project-catalogue'
 import { SupportHoursPackageImpactService } from './support-hours-package-impact.service'
 import { BadGatewayException, BadRequestException, ConflictException, HttpException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common'
 import { timingSafeEqual } from 'crypto'
@@ -92,6 +93,7 @@ export class SupportHoursPackagesService {
 
   async findAll() {
     const packages = await this.packagesRepository.find({
+      where: { project: { projectType: ReportProjectType.Support } },
       relations: { project: true, consumptions: { report: true } },
       order: { purchaseDate: 'ASC', id: 'ASC' },
     })
@@ -412,10 +414,10 @@ export class SupportHoursPackagesService {
   }
 
   async findSupportProjectTasks(projectId: number) {
+    const project = await this.findSupportProject(projectId)
     const cached = this.supportProjectTasksCache.get(projectId)
     if (cached && cached.expiresAt > Date.now()) return cached.tasks
 
-    const project = await this.findSupportProject(projectId)
     const bitrixProjectId = Number(project.bitrixProjectId)
     if (!Number.isSafeInteger(bitrixProjectId) || bitrixProjectId <= 0) {
       throw new BadRequestException('Support project Bitrix ID is invalid')
@@ -440,12 +442,13 @@ export class SupportHoursPackagesService {
     return tasks
   }
 
-  async syncSupportProjects() {
-    if (Date.now() - this.supportProjectsLastSyncAt < PROJECTS_SYNC_TTL_MS) {
+  async syncSupportProjects(force = false) {
+    if (this.supportProjectsSyncPromise) return await this.supportProjectsSyncPromise
+    if (!force && Date.now() - this.supportProjectsLastSyncAt < PROJECTS_SYNC_TTL_MS) {
       return { created: 0, updated: 0 }
     }
     if (!this.supportProjectsSyncPromise) {
-      this.supportProjectsSyncPromise = this.performSupportProjectsSync()
+      this.supportProjectsSyncPromise = this.enqueueMutation(() => this.performSupportProjectsSync())
         .catch((error: unknown) => {
           const reason = error instanceof Error ? error.message : String(error)
           this.logger.error(`Support projects synchronization failed: ${reason}`)
@@ -684,36 +687,10 @@ export class SupportHoursPackagesService {
   }
 
   private async performSupportProjectsSync() {
-    const bitrixProjects = await this.bitrixService.listAllItems<BitrixProject>({
-      entityTypeId: EntityTypeIds.projects,
-      filter: { [PROJECT_TYPE]: SUPPORT_PROJECT_TYPE },
-      select: ['id', 'title', PROJECT_TYPE],
-    })
-    let created = 0
-    let updated = 0
-
-    for (const bitrixProject of bitrixProjects) {
-      const project = await this.projectsRepository.findOne({ where: { bitrixProjectId: String(bitrixProject.id) } })
-      const title = bitrixProject.title?.trim() || project?.title || `Проект ${bitrixProject.id}`
-      if (!project) {
-        await this.projectsRepository.save(this.projectsRepository.create({
-          bitrixProjectId: String(bitrixProject.id),
-          title,
-          projectType: ReportProjectType.Support,
-        }))
-        created += 1
-        continue
-      }
-      if (project.title !== title || project.projectType !== ReportProjectType.Support) {
-        project.title = title
-        project.projectType = ReportProjectType.Support
-        await this.projectsRepository.save(project)
-        updated += 1
-      }
-    }
-
+    const result = await synchronizeSupportProjectCatalogue(this.projectsRepository, this.dataSource, this.bitrixService)
+    this.supportProjectTasksCache.clear()
     this.supportProjectsLastSyncAt = Date.now()
-    return { created, updated }
+    return result
   }
 
   private readWebhookValue(payload: SupportHoursWebhookPayload, path: string[]) {

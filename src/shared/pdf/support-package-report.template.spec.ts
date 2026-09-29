@@ -40,7 +40,7 @@ describe('support package PDF content', () => {
     const missing = buildSupportPackageReportHtml({ ...sample, tasks: [{ ...sample.tasks[0], status: 'unknown', soldHours: null }] })
     expect(missing).toContain('Статус недоступен')
     expect(missing).toContain('26 / — ч')
-    expect(missing).toContain('Количество часов, проданных клиенту, не указано')
+    expect(missing).toContain('Общий лимит часов по задаче не указан')
   })
 
   it('renders Bitrix content as text and cannot insert external assets or executable HTML', () => {

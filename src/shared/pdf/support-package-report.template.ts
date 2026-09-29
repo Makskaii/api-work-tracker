@@ -72,9 +72,9 @@ export const buildSupportPackageReportHtml = (data: SupportPackageReportData, wa
     <section class="task-block">
       <div class="task-heading">
         <h3>${index + 1}. ${escapeHtml(task.title)}<span class="task-status ${task.status}">${taskStatus(task.status)}</span></h3>
-        <strong>${escapeHtml(number(task.totalHours))} / ${task.soldHours === null ? '—' : escapeHtml(number(task.soldHours))} ч</strong>
+        <strong>${escapeHtml(number(task.totalHours))} / ${task.soldHours === null ? '—' : escapeHtml(number(task.soldHours))} ч<small>Сделано / Всего</small></strong>
       </div>
-      <p class="task-summary">Из выбранного пакета: ${escapeHtml(hours(task.hours))}${task.soldHours === null ? ' · Количество часов, проданных клиенту, не указано' : ''}</p>
+      <p class="task-summary">Из выбранного пакета: ${escapeHtml(hours(task.hours))}${task.soldHours === null ? ' · Общий лимит часов по задаче не указан' : ''}</p>
       ${reportTable(task.reports)}
       ${task.otherPackageReports.length ? otherPackageTable(task.otherPackageReports) : ''}
     </section>`).join('')
@@ -108,6 +108,7 @@ export const buildSupportPackageReportHtml = (data: SupportPackageReportData, wa
     .task-heading { display: flex; align-items: flex-start; gap: 16px; margin: 0; padding: 9px 10px; background: #eef5f5; border: 1px solid #d5e1e1; border-bottom: 0; break-after: avoid; page-break-after: avoid; }
     h3 { flex: 1; min-width: 0; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
     .task-heading strong { white-space: nowrap; color: #316f74; }
+    .task-heading strong small { display: block; font-size: 9px; font-weight: 400; }
     .task-status { display: inline-block; margin-left: 8px; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 400; white-space: nowrap; background: #e0ebf5; color: #285580; }
     .task-status.completed { background: #dcefe4; color: #236b46; }
     .task-status.unknown { background: #e7e7e7; color: #555; }

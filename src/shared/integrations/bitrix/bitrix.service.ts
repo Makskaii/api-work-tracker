@@ -265,9 +265,11 @@ export class BitrixService {
     try {
       let start = 0
       let hasNextPage = true
+      let pageCount = 0
       const items: T[] = []
 
       while (hasNextPage) {
+        if (++pageCount > 10_000) throw new BadGatewayException('Bitrix pagination exceeded the page limit')
         const response = await firstValueFrom(
           this.httpService.get(Endpoints.crmItems, {
             params: {
@@ -277,17 +279,30 @@ export class BitrixService {
           }),
         )
 
-        const pageItems = response.data?.result?.items
-
-        if (Array.isArray(pageItems)) {
-          items.push(...pageItems)
+        if (response.data?.error) {
+          throw new BadGatewayException(response.data.error_description || 'Bitrix returned an error')
         }
+        const pageItems: unknown = response.data?.result?.items
+        if (!Array.isArray(pageItems)) {
+          throw new BadGatewayException('Bitrix returned an invalid items page')
+        }
+        items.push(...pageItems)
 
-        const next = Number(response.data?.next)
-
-        if (Number.isFinite(next) && next > 0) {
-          start = next
+        const total = response.data?.total
+        if (total != null && (!Number.isSafeInteger(Number(total)) || Number(total) < 0)) {
+          throw new BadGatewayException('Bitrix returned an invalid total')
+        }
+        const next = response.data?.next
+        if (next != null) {
+          const nextOffset = Number(next)
+          if (!Number.isSafeInteger(nextOffset) || nextOffset <= start || !pageItems.length) {
+            throw new BadGatewayException('Bitrix returned an invalid pagination cursor')
+          }
+          start = nextOffset
         } else {
+          if (total != null && items.length < Number(total)) {
+            throw new BadGatewayException('Bitrix returned an incomplete items list')
+          }
           hasNextPage = false
         }
       }

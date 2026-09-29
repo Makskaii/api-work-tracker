@@ -1,6 +1,6 @@
 import { BadGatewayException, BadRequestException, NotFoundException } from '@nestjs/common'
 import { validate } from 'class-validator'
-import { DailyReportCodes, EntityTypeIds, ProjectCodes, REPORT_ACTIVITY_IBLOCK_ID, TaskCodes } from '../constants/const'
+import { DailyReportCodes, EntityTypeIds, ProjectCodes, REPORT_ACTIVITY_IBLOCK_ID, SUPPORT_REPORT_TYPES, TaskCodes } from '../constants/const'
 import { ReportProjectType } from '../project-reports/entities/project-report-project.entity'
 import { PrepareSupportReportDto } from './dto/prepare-support-report.dto'
 import { SupportReportEditorService } from './support-report-editor.service'
@@ -49,7 +49,7 @@ describe('SupportReportEditorService', () => {
         [DailyReportCodes.client]: 45,
         [DailyReportCodes.project]: 67,
         [DailyReportCodes.timeSpent]: 1.5,
-        [DailyReportCodes.includeInPackage]: 1,
+        [DailyReportCodes.includeInPackage]: 'Y',
         [DailyReportCodes.activityType]: 3,
         begindate: '2026-09-29',
       },
@@ -67,7 +67,7 @@ describe('SupportReportEditorService', () => {
       [DailyReportCodes.parentproject]: 94,
       [DailyReportCodes.parentId]: 0,
       [DailyReportCodes.company]: 215,
-      [DailyReportCodes.includeInPackage]: 0,
+      [DailyReportCodes.includeInPackage]: 'N',
     })
     expect(f.bitrix.getItem.mock.calls.some(([params]) => params.entityTypeId === EntityTypeIds.tasks)).toBe(false)
   })
@@ -162,7 +162,7 @@ describe('SupportReportEditorService', () => {
       [DailyReportCodes.activityType]: '3', [DailyReportCodes.includeInPackage]: flag,
       begindate: '2026-09-28T22:30:00Z',
     })
-    expect(await f.service.edit(31, 5402)).toEqual({ id: 5402, taskId: 1002, description: 'Работа', hours: 1.5, activityId: 3, includeInPackage: true, reportDate: '2026-09-29' })
+    expect(await f.service.edit(31, 5402)).toEqual({ id: 5402, taskId: 1002, description: 'Работа', hours: 1.5, activityId: 3, reportTypeId: null, includeInPackage: true, reportDate: '2026-09-29' })
   })
 
   it.each(['N', false, 0, '0', null])('reads unchecked Bitrix flag %s as excluded', async (flag) => {
@@ -197,5 +197,52 @@ describe('SupportReportEditorService', () => {
     await expect(f.service.prepare(31, validDto())).rejects.toThrow('Проект больше не относится к техподдержке')
     f.setProject(null)
     await expect(f.service.prepare(31, validDto())).rejects.toBeInstanceOf(BadGatewayException)
+  })
+
+  it('provides separate options for work activities and report classifications', async () => {
+    const f = fixture()
+    expect(await f.service.formOptions()).toEqual({
+      activities: [{ id: 3, title: 'Разработка' }, { id: 5, title: 'Встреча' }],
+      reportTypes: SUPPORT_REPORT_TYPES,
+    })
+  })
+
+  it.each([396, 397, 398])('prepares explicit report classification %s independently of package inclusion', async (reportTypeId) => {
+    const f = fixture()
+    for (const includeInPackage of [true, false]) {
+      const result = await f.service.prepare(31, validDto({ reportTypeId, includeInPackage }))
+      expect(result.fields[DailyReportCodes.reportType]).toBe(reportTypeId)
+      expect(result.fields[DailyReportCodes.includeInPackage]).toBe(includeInPackage ? 'Y' : 'N')
+      expect(result.fields[DailyReportCodes.activityType]).toBe(3)
+    }
+  })
+
+  it('reads and explicitly changes an existing classification without confusing it with work activity', async () => {
+    const f = fixture()
+    f.setReport({ id: 5402, [DailyReportCodes.parentproject]: '94', [DailyReportCodes.reportType]: '397', [DailyReportCodes.activityType]: '3', createdTime: now.toISOString() })
+    expect(await f.service.edit(31, 5402)).toMatchObject({ reportTypeId: 397, activityId: 3 })
+    const result = await f.service.prepare(31, validDto({ reportId: 5402, reportTypeId: 398 }))
+    expect(result.fields[DailyReportCodes.reportType]).toBe(398)
+    expect(result.fields[DailyReportCodes.activityType]).toBe(3)
+  })
+
+  it.each([undefined, 396, 397, 398])('preserves existing classification %s when an older client omits the selector', async (existingType) => {
+    const f = fixture()
+    f.setReport({ id: 5402, [DailyReportCodes.parentproject]: '94', [DailyReportCodes.reportType]: existingType })
+    for (const includeInPackage of [true, false]) {
+      const result = await f.service.prepare(31, validDto({ reportId: 5402, includeInPackage }))
+      expect(result.fields).not.toHaveProperty(DailyReportCodes.reportType)
+    }
+    const createResult = await f.service.prepare(31, validDto())
+    expect(createResult.fields).not.toHaveProperty(DailyReportCodes.reportType)
+    expect((await validate(Object.assign(new PrepareSupportReportDto(), validDto()))).some((error) => error.property === 'reportTypeId')).toBe(false)
+  })
+
+  it.each([392, 0, -1, 396.5, '396', null])('rejects invalid classification %s at the DTO and service boundary', async (reportTypeId) => {
+    const f = fixture()
+    const dto = Object.assign(new PrepareSupportReportDto(), validDto(), { reportTypeId })
+    expect((await validate(dto)).some((error) => error.property === 'reportTypeId')).toBe(true)
+    await expect(f.service.prepare(31, dto)).rejects.toThrow('Выберите доступный тип активности')
+    expect(f.bitrix.getItem).not.toHaveBeenCalled()
   })
 })

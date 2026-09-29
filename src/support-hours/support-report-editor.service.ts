@@ -4,7 +4,7 @@ import dayjs from 'dayjs'
 import timezone from 'dayjs/plugin/timezone'
 import utc from 'dayjs/plugin/utc'
 import { Repository } from 'typeorm'
-import { DailyReportCodes, EntityTypeIds, ProjectCodes, REPORT_ACTIVITY_IBLOCK_ID, TaskCodes } from '../constants/const'
+import { DailyReportCodes, EntityTypeIds, ProjectCodes, REPORT_ACTIVITY_IBLOCK_ID, SUPPORT_REPORT_TYPES, TaskCodes } from '../constants/const'
 import { ReportProject, ReportProjectType } from '../project-reports/entities/project-report-project.entity'
 import { BitrixService } from '../shared/integrations/bitrix/bitrix.service'
 import { PrepareSupportReportDto } from './dto/prepare-support-report.dto'
@@ -27,7 +27,7 @@ export class SupportReportEditorService {
   ) {}
 
   async formOptions() {
-    return { activities: await this.bitrix.getListElements(REPORT_ACTIVITY_IBLOCK_ID) }
+    return { activities: await this.bitrix.getListElements(REPORT_ACTIVITY_IBLOCK_ID), reportTypes: SUPPORT_REPORT_TYPES }
   }
 
   private async project(id: number) {
@@ -59,6 +59,7 @@ export class SupportReportEditorService {
       reportDate: reportDate.format('YYYY-MM-DD'),
       includeInPackage: [true, 1, '1', 'Y'].includes(report[DailyReportCodes.includeInPackage] as string),
       activityId: positiveId(report[DailyReportCodes.activityType]),
+      reportTypeId: positiveId(report[DailyReportCodes.reportType]),
     }
   }
 
@@ -69,6 +70,7 @@ export class SupportReportEditorService {
     const description = dto.description.trim()
     if (!description) throw new BadRequestException('Опишите выполненную работу')
     if (dto.reportDate > dayjs().tz('Europe/Moscow').format('YYYY-MM-DD')) throw new BadRequestException('Дата отчёта не может быть в будущем')
+    if (dto.reportTypeId !== undefined && !SUPPORT_REPORT_TYPES.some((type) => type.id === dto.reportTypeId)) throw new BadRequestException('Выберите доступный тип активности')
     if (dto.reportId) await this.report(dto.reportId, project.bitrixProjectId!)
     const liveProject = await this.bitrix.getItem<BitrixItem>({ entityTypeId: EntityTypeIds.projects, id: Number(project.bitrixProjectId) })
     if (!liveProject || String(liveProject.id) !== project.bitrixProjectId) throw new BadGatewayException('Не удалось проверить проект в Битриксе')
@@ -91,12 +93,17 @@ export class SupportReportEditorService {
       [DailyReportCodes.client]: positiveId(task?.[TaskCodes.client]) ?? 0,
       [DailyReportCodes.project]: positiveId(task?.[TaskCodes.project]) ?? 0,
       [DailyReportCodes.activityType]: dto.activityId,
-      [DailyReportCodes.includeInPackage]: dto.includeInPackage ? 1 : 0,
+      // crm.item.add/update accept boolean fields as Y/N. The list filter
+      // uses 1/0, but reusing that format for writes silently clears this flag.
+      [DailyReportCodes.includeInPackage]: dto.includeInPackage ? 'Y' : 'N',
       begindate: dto.reportDate,
     }
     if (!dto.reportId) {
       fields.opened = 'Y'
     }
+    // Older clients omit this field. Preserve the existing classification;
+    // inclusion in a support package does not determine the activity type.
+    if (dto.reportTypeId !== undefined) fields[DailyReportCodes.reportType] = dto.reportTypeId
     return { entityTypeId: EntityTypeIds.reports, fields }
   }
 }

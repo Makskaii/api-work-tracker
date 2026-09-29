@@ -62,6 +62,7 @@ export enum DailyReportCodes {
   client = 'ufCrm11_1772012010',
   project = 'ufCrm11_1774018669',
   activityType = 'ufCrm11_1774427281',
+  reportType = 'ufCrm11_1778666750123',
   parentId = 'parentId1072',
   company = 'ufCrm11_1775128268',
   parentproject = 'ufCrm11_1775128299',
@@ -69,6 +70,12 @@ export enum DailyReportCodes {
 }
 
 export const REPORT_ACTIVITY_IBLOCK_ID = 25
+
+export const SUPPORT_REPORT_TYPES = [
+  { id: 396, title: 'Оплачиваемая клиентом задача' },
+  { id: 397, title: 'Не оплачиваемая клиентом задача' },
+  { id: 398, title: 'Внутренняя задача (от нашей компании)' },
+] as const
 
 export const Endpoints = {
   tasks: 'tasks.task.list',

@@ -235,6 +235,33 @@ export class BitrixService {
     }
   }
 
+  async getListElements(iblockId: number): Promise<Array<{ id: number; title: string }>> {
+    const items = new Map<number, { id: number; title: string }>()
+    let start = 0
+    try {
+      for (;;) {
+        const { data } = await firstValueFrom(this.httpService.post(Endpoints.lists, {
+          IBLOCK_TYPE_ID: 'lists', IBLOCK_ID: iblockId, SELECT: ['ID', 'NAME'], FILTER: { ACTIVE: 'Y' }, start,
+        }))
+        if (data?.error || !Array.isArray(data?.result)) throw new BadGatewayException('Bitrix returned an invalid work activity list')
+        for (const item of data.result) {
+          const id = Number(item?.ID)
+          if (!Number.isSafeInteger(id) || id <= 0 || typeof item.NAME !== 'string' || items.has(id)) throw new BadGatewayException('Bitrix returned an invalid work activity')
+          items.set(id, { id, title: item.NAME })
+        }
+        if (data.next == null) {
+          if (data.total != null && items.size < Number(data.total)) throw new BadGatewayException('Bitrix returned an incomplete work activity list')
+          return [...items.values()]
+        }
+        const next = Number(data.next)
+        if (!Number.isSafeInteger(next) || next <= start || items.size > 10000) throw new BadGatewayException('Bitrix work activity pagination is invalid')
+        start = next
+      }
+    } catch {
+      throw new BadGatewayException('Не удалось получить виды работ из Битрикса')
+    }
+  }
+
   async getListElementTitle(iblockId: number, id: number): Promise<string | null> {
     try {
       const response = await firstValueFrom(

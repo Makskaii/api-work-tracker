@@ -1,8 +1,12 @@
+import { SupportHoursPackageImpactService } from './support-hours-package-impact.service'
 import { BadGatewayException, BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common'
 import { timingSafeEqual } from 'crypto'
+import dayjs from 'dayjs'
+import timezone from 'dayjs/plugin/timezone'
+import utc from 'dayjs/plugin/utc'
 import { InjectRepository } from '@nestjs/typeorm'
 import { DataSource, EntityManager, In, Repository } from 'typeorm'
-import { DailyReportCodes, EntityTypeIds, TaskCodes } from '../constants/const'
+import { DailyReportCodes, EntityTypeIds, TaskCodes, TaskStageIds } from '../constants/const'
 import { ReportProject, ReportProjectType } from '../project-reports/entities/project-report-project.entity'
 import { BitrixService } from '../shared/integrations/bitrix/bitrix.service'
 import { CreateSupportHoursPackageDto } from './dto/create-support-hours-package.dto'
@@ -11,8 +15,14 @@ import { SupportHoursConsumption } from './entities/support-hours-consumption.en
 import { SupportHoursPackage } from './entities/support-hours-package.entity'
 import { SupportHoursReport } from './entities/support-hours-report.entity'
 import { allocateSupportHours } from './support-hours-allocation'
+import type { SupportHoursPackageReportSnapshot, SupportPackageTaskContext } from './support-hours-package-report.types'
+
+dayjs.extend(utc)
+dayjs.extend(timezone)
 
 const SUPPORT_FLAG = 'ufCrm11_1776177558677'
+// crm.item.list expects 1/0 for boolean filters, while returned field values are Y/N.
+const SUPPORT_FLAG_ENABLED_FILTER = 1
 const PROJECT_TYPE = 'ufCrm20_1781683772'
 const SUPPORT_PROJECT_TYPE = '410'
 const WINDOW_MS = 48 * 60 * 60 * 1000
@@ -48,6 +58,7 @@ type BitrixTask = {
   id: string | number
   title?: string
   stageId?: string | null
+  [TaskCodes.hours]?: string | number | null
 }
 
 type SupportHoursWebhookPayload = Record<string, unknown>
@@ -65,9 +76,10 @@ export class SupportHoursPackagesService {
     @InjectRepository(ReportProject) private readonly projectsRepository: Repository<ReportProject>,
     @InjectRepository(SupportHoursPackage) private readonly packagesRepository: Repository<SupportHoursPackage>,
     @InjectRepository(SupportHoursReport) private readonly reportsRepository: Repository<SupportHoursReport>,
-    @InjectRepository(SupportHoursConsumption) private readonly consumptionsRepository: Repository<SupportHoursConsumption>,
+    @InjectRepository(SupportHoursConsumption) _consumptionsRepository: Repository<SupportHoursConsumption>,
     private readonly dataSource: DataSource,
     private readonly bitrixService: BitrixService,
+    private readonly impactService?: SupportHoursPackageImpactService,
   ) {}
 
   async findAll() {
@@ -100,20 +112,133 @@ export class SupportHoursPackagesService {
     })
   }
 
-  async getReportSnapshot(packageId: number): Promise<SupportHoursPackage> {
+  async getReportSnapshot(packageId: number): Promise<SupportHoursPackageReportSnapshot> {
     if (this.positiveId(packageId) === null) throw new BadRequestException('A positive package ID is required')
     if (!(await this.packagesRepository.findOne({ where: { id: packageId } }))) {
       throw new NotFoundException('Support hours package not found')
     }
     await this.sync()
-    return await this.enqueueMutation(() => this.dataSource.transaction(async (manager) => {
+    return await this.enqueueMutation(async () => {
+      const asOfDate = dayjs().tz('Europe/Moscow').format('YYYY-MM-DD')
+      let snapshot = await this.readPackageReportSnapshot(packageId, asOfDate)
+      const checkedTaskIds = new Set<string>()
+      for (let pass = 0; ; pass += 1) {
+        const pendingIds = snapshot.taskIds.filter((id) => !checkedTaskIds.has(id))
+        if (!pendingIds.length) break
+        if (pass >= 20) throw new BadGatewayException('Package task history did not stabilize')
+        await this.importPackageTaskHistory(snapshot.item, pendingIds)
+        pendingIds.forEach((id) => checkedTaskIds.add(id))
+        // Older reports can redistribute allocations and expose another task in this package.
+        snapshot = await this.readPackageReportSnapshot(packageId, asOfDate)
+      }
+      const { item, taskIds, reports } = snapshot
+      // The transaction is closed before reading current task status and the client's agreed hours.
+      const tasks = await this.readPackageTaskMetadata(taskIds)
+      const taskContexts: SupportPackageTaskContext[] = taskIds.map((id) => {
+        const task = tasks.get(id)
+        const taskReports = reports.filter((report) => report.bitrixTaskId === id && this.isReportOnOrBefore(report, asOfDate))
+          .map((report) => ({
+            ...report,
+            consumptions: report.consumptions.filter((consumption) => String(consumption.package?.projectId) === String(item.projectId)),
+          }))
+          .filter((report) => report.consumptions.length > 0)
+        const cachedTitle = taskReports.find((report) => report.taskTitle?.trim())?.taskTitle?.trim()
+        return {
+          id,
+          title: task?.title?.trim() || cachedTitle || `Задача №${id}`,
+          status: task ? this.packageTaskStatus(task.stageId) : 'unknown',
+          soldHours: task ? this.readSoldTaskHours(task[TaskCodes.hours]) : null,
+          reports: taskReports,
+        }
+      })
+      return { ...item, taskContexts }
+    })
+  }
+
+  private async readPackageReportSnapshot(packageId: number, asOfDate: string) {
+    return await this.dataSource.transaction(async (manager) => {
       const item = await manager.getRepository(SupportHoursPackage).findOne({
         where: { id: packageId },
         relations: { project: true, consumptions: { report: true } },
       })
       if (!item) throw new NotFoundException('Support hours package not found')
-      return item
-    }))
+      const taskIds = [...new Set(item.consumptions
+        .filter((consumption) => this.toNumber(consumption.hours) > 0 && this.isReportOnOrBefore(consumption.report, asOfDate))
+        .map((consumption) => consumption.report.bitrixTaskId)
+        .filter((id): id is string => this.positiveId(id) !== null))]
+      const reports = taskIds.length ? await manager.getRepository(SupportHoursReport).find({
+        where: { projectId: item.projectId, bitrixTaskId: In(taskIds) },
+        relations: { consumptions: { package: true } },
+        order: { reportDate: 'ASC', id: 'ASC' },
+      }) : []
+      return { item, taskIds, reports }
+    })
+  }
+
+  private async importPackageTaskHistory(item: SupportHoursPackage, taskIds: string[]): Promise<void> {
+    const projectId = this.positiveId(item.project.bitrixProjectId)
+    if (projectId === null) throw new BadGatewayException('Package project has no valid Bitrix ID')
+    const discovered = new Map<string, BitrixSupportReport>()
+    for (let offset = 0; offset < taskIds.length; offset += REPORT_RECHECK_BATCH_SIZE) {
+      const batch = taskIds.slice(offset, offset + REPORT_RECHECK_BATCH_SIZE)
+      const reports = await this.bitrixService.listAllItems<BitrixSupportReport>({
+        entityTypeId: EntityTypeIds.reports,
+        filter: { [SUPPORT_FLAG]: SUPPORT_FLAG_ENABLED_FILTER, [DailyReportCodes.parentproject]: projectId, [`@${DailyReportCodes.parentId}`]: batch },
+        select: REPORT_SELECT,
+      })
+      for (const report of reports) {
+        const id = String(report?.id)
+        if (this.positiveId(report?.id) === null || discovered.has(id) ||
+          !batch.includes(String(report[DailyReportCodes.parentId])) ||
+          String(report[DailyReportCodes.parentproject]) !== String(projectId) ||
+          !this.isChecked(report[SUPPORT_FLAG]) || !Object.hasOwn(report, DailyReportCodes.timeSpent)) {
+          throw new BadGatewayException('Bitrix returned invalid package task history')
+        }
+        discovered.set(id, report)
+      }
+    }
+    // Fetch and validate every page before importing any historical report.
+    for (const [id, report] of discovered) await this.applyReport(id, report)
+  }
+
+  private isReportOnOrBefore(report: SupportHoursReport, asOfDate: string): boolean {
+    const date = dayjs(report.reportDate)
+    return date.isValid() && date.tz('Europe/Moscow').format('YYYY-MM-DD') <= asOfDate
+  }
+
+  private async readPackageTaskMetadata(taskIds: string[]): Promise<Map<string, BitrixTask>> {
+    const tasks = new Map<string, BitrixTask>()
+    for (let offset = 0; offset < taskIds.length; offset += REPORT_RECHECK_BATCH_SIZE) {
+      const batch = taskIds.slice(offset, offset + REPORT_RECHECK_BATCH_SIZE)
+      const current = await this.bitrixService.listAllItems<BitrixTask>({
+        entityTypeId: EntityTypeIds.tasks,
+        filter: { '@id': batch },
+        select: ['id', 'title', 'stageId', TaskCodes.hours],
+      })
+      for (const task of current) {
+        const id = String(task?.id)
+        if (!batch.includes(id) || tasks.has(id) || typeof task.title !== 'string' || typeof task.stageId !== 'string' || !task.stageId || !Object.hasOwn(task, TaskCodes.hours)) {
+          throw new BadGatewayException('Bitrix returned invalid task details for the package report')
+        }
+        this.readSoldTaskHours(task[TaskCodes.hours])
+        tasks.set(id, task)
+      }
+    }
+    return tasks
+  }
+
+  private readSoldTaskHours(value: unknown): number | null {
+    if (value === null || (typeof value === 'string' && value.trim() === '')) return null
+    if (typeof value !== 'number' && typeof value !== 'string') throw new BadGatewayException('Bitrix returned invalid client task hours')
+    const hours = Number(String(value).replace(',', '.'))
+    if (!Number.isFinite(hours) || hours < 0) throw new BadGatewayException('Bitrix returned invalid client task hours')
+    return this.round(hours)
+  }
+
+  private packageTaskStatus(stageId?: string | null): SupportPackageTaskContext['status'] {
+    if (stageId === TaskStageIds.done || stageId === 'DT1072_18:SUCCESS') return 'completed'
+    if (stageId === 'DT1072_18:UC_JP9WR1' || stageId === 'DT1072_18:FAIL') return 'cancelled'
+    return Object.values(TaskStageIds).some((knownStage) => knownStage === stageId) ? 'in_work' : 'unknown'
   }
 
   async findSupportProjects() {
@@ -206,38 +331,49 @@ export class SupportHoursPackagesService {
   async create(dto: CreateSupportHoursPackageDto) {
     return await this.enqueueMutation(async () => {
       const project = await this.findSupportProject(dto.projectId)
-      const item = await this.packagesRepository.save(this.packagesRepository.create({
-        projectId: project.id,
-        purchasedHours: this.round(dto.purchasedHours),
-        purchaseDate: dto.purchaseDate,
-        amount: dto.amount == null ? null : this.round(dto.amount),
-        comment: dto.comment?.trim() || null,
-      }))
-      await this.reallocateProject(project.id)
-      return item
+      return await this.dataSource.transaction(async (manager) => {
+        const repository = manager.getRepository(SupportHoursPackage)
+        const item = await repository.save(repository.create({
+          projectId: project.id,
+          purchasedHours: this.round(dto.purchasedHours),
+          purchaseDate: dto.purchaseDate,
+          amount: dto.amount == null ? null : this.round(dto.amount),
+          comment: dto.comment?.trim() || null,
+        }))
+        await this.reallocateProjectInTransaction(manager, project.id)
+        return item
+      })
     })
   }
 
-  async update(id: number, dto: UpdateSupportHoursPackageDto) {
+  async update(id: number, dto: UpdateSupportHoursPackageDto, fingerprint?: string) {
     return await this.enqueueMutation(async () => {
-      const item = await this.packagesRepository.findOne({ where: { id } })
-      if (!item) throw new NotFoundException('Support hours package not found')
-      if (dto.purchasedHours !== undefined) item.purchasedHours = this.round(dto.purchasedHours)
-      if (dto.purchaseDate !== undefined) item.purchaseDate = dto.purchaseDate
-      if (dto.amount !== undefined) item.amount = dto.amount == null ? null : this.round(dto.amount)
-      if (dto.comment !== undefined) item.comment = dto.comment?.trim() || null
-      const saved = await this.packagesRepository.save(item)
-      await this.reallocateProject(item.projectId)
-      return saved
+      await this.impactService?.assertPreview(id, { operation: 'update', changes: dto }, fingerprint)
+      return await this.dataSource.transaction(async (manager) => {
+        const repository = manager.getRepository(SupportHoursPackage)
+        const item = await repository.findOne({ where: { id } })
+        if (!item) throw new NotFoundException('Support hours package not found')
+        if (dto.purchasedHours !== undefined) item.purchasedHours = this.round(dto.purchasedHours)
+        if (dto.purchaseDate !== undefined) item.purchaseDate = dto.purchaseDate
+        if (dto.amount !== undefined) item.amount = dto.amount == null ? null : this.round(dto.amount)
+        if (dto.comment !== undefined) item.comment = dto.comment?.trim() || null
+        const saved = await repository.save(item)
+        await this.reallocateProjectInTransaction(manager, item.projectId)
+        return saved
+      })
     })
   }
 
-  async remove(id: number): Promise<void> {
+  async remove(id: number, fingerprint?: string): Promise<void> {
     return await this.enqueueMutation(async () => {
-      const item = await this.packagesRepository.findOne({ where: { id } })
-      if (!item) throw new NotFoundException('Support hours package not found')
-      await this.packagesRepository.remove(item)
-      await this.reallocateProject(item.projectId)
+      await this.impactService?.assertPreview(id, { operation: 'delete' }, fingerprint)
+      await this.dataSource.transaction(async (manager) => {
+        const repository = manager.getRepository(SupportHoursPackage)
+        const item = await repository.findOne({ where: { id } })
+        if (!item) throw new NotFoundException('Support hours package not found')
+        await repository.remove(item)
+        await this.reallocateProjectInTransaction(manager, item.projectId)
+      })
     })
   }
 
@@ -254,7 +390,7 @@ export class SupportHoursPackagesService {
     const cached = await this.reportsRepository.find()
     const reports = await this.bitrixService.listAllItems<BitrixSupportReport>({
       entityTypeId: EntityTypeIds.reports,
-      filter: { '>=lastActivityTime': since.toISOString(), [SUPPORT_FLAG]: 'Y' },
+      filter: { '>=lastActivityTime': since.toISOString(), [SUPPORT_FLAG]: SUPPORT_FLAG_ENABLED_FILTER },
       select: REPORT_SELECT,
     })
     const cachedIds = new Set(cached.map((report) => report.bitrixReportId))
@@ -289,6 +425,7 @@ export class SupportHoursPackagesService {
         await this.applyReport(report.bitrixReportId, byId.get(report.bitrixReportId) ?? null)
       }
     }
+    this.supportProjectTasksCache.clear()
     return { processedReports: reports.length, synchronizedAt: new Date().toISOString() }
   }
 
@@ -309,7 +446,9 @@ export class SupportHoursPackagesService {
       const projectIds = new Set<number>()
       if (existing) projectIds.add(existing.projectId)
       if (prepared) {
-        await repository.save(repository.create({ ...existing, ...prepared, bitrixReportId }))
+        // Fresh TypeORM entities have own undefined fields; merge preserves the existing primary key and timestamps.
+        const entity = repository.merge(existing ?? repository.create({ bitrixReportId }), prepared)
+        await repository.save(entity)
         projectIds.add(prepared.projectId)
       } else if (existing) {
         await repository.remove(existing)
@@ -447,10 +586,6 @@ export class SupportHoursPackagesService {
       title,
       projectType: ReportProjectType.Support,
     }))
-  }
-
-  private async reallocateProject(projectId: number): Promise<void> {
-    await this.dataSource.transaction((manager) => this.reallocateProjectInTransaction(manager, projectId))
   }
 
   private async reallocateProjectInTransaction(manager: EntityManager, projectId: number): Promise<void> {

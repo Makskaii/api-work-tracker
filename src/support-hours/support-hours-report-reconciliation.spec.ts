@@ -12,7 +12,7 @@ const reportId = '80'
 const oldDate = new Date('2025-01-01T00:00:00Z')
 const cachedReport = (): SupportHoursReport => ({
   id: 1, bitrixReportId: reportId, projectId: 1, hours: 80,
-  reportDate: oldDate, lastActivityAt: oldDate,
+  reportDate: oldDate, lastActivityAt: oldDate, createdAt: oldDate, updatedAt: oldDate,
 }) as SupportHoursReport
 const liveReport = (overrides: Record<string, unknown> = {}) => ({
   id: reportId, title: 'Report', begindate: oldDate.toISOString(), createdTime: oldDate.toISOString(),
@@ -30,12 +30,22 @@ function fixture(initialReports = [cachedReport()]) {
   const packages = [1, 2].map((id) => ({ id, projectId: id, purchasedHours: 100, purchaseDate: '2025-01-01' }))
   const projects = [1, 2].map((id) => ({ id, bitrixProjectId: String(100 + id), title: `Project ${id}`, projectType: ReportProjectType.Support }))
   const reportsRepository = {
-    create: jest.fn((value) => ({ ...value })),
+    create: jest.fn((value) => Object.assign(new SupportHoursReport(), value)),
+    merge: jest.fn((entity, source) => {
+      // TypeORM copies only defined column/relation values from its source entity.
+      for (const [key, value] of Object.entries(source)) {
+        if (value !== undefined) entity[key] = value
+      }
+      return entity
+    }),
     find: jest.fn((options?: { where?: { projectId: number } }) => Promise.resolve(structuredClone(reports.filter((report) => !options?.where || report.projectId === options.where.projectId)))),
     findOne: jest.fn(({ where }) => Promise.resolve(structuredClone(reports.find((report) => report.bitrixReportId === where.bitrixReportId) ?? null))),
     save: jest.fn((value) => {
-      const index = reports.findIndex((report) => report.bitrixReportId === value.bitrixReportId)
-      const saved = { id: index < 0 ? reports.length + 1 : reports[index].id, ...value }
+      const index = reports.findIndex((report) => report.id === value.id)
+      if (index < 0 && reports.some((report) => report.bitrixReportId === value.bitrixReportId)) {
+        throw new Error(`Duplicate entry ${value.bitrixReportId} for unique Bitrix report ID`)
+      }
+      const saved = { ...value, id: index < 0 ? Math.max(0, ...reports.map((report) => report.id)) + 1 : reports[index].id }
       if (index < 0) reports.push(saved)
       else reports[index] = saved
       return Promise.resolve(saved)
@@ -90,6 +100,31 @@ describe('Support hours authoritative report reconciliation', () => {
   afterAll(() => {
     if (priorSecret === undefined) delete process.env.SUPPORT_HOURS_WEBHOOK_SECRET
     else process.env.SUPPORT_HOURS_WEBHOOK_SECRET = priorSecret
+  })
+
+  it('updates a real entity with undefined declared fields without erasing its existing primary key', async () => {
+    const fresh = new SupportHoursReport()
+    expect(Object.hasOwn(fresh, 'id')).toBe(true)
+    expect(fresh.id).toBeUndefined()
+    expect(Object.hasOwn(fresh, 'createdAt')).toBe(true)
+    const f = fixture()
+    await f.service.processReportWebhook(webhook())
+    await f.service.processReportWebhook(webhook())
+    expect(f.reportsRepository.save).toHaveBeenLastCalledWith(expect.objectContaining({
+      id: 1, bitrixReportId: reportId, hours: 7, createdAt: oldDate, updatedAt: oldDate,
+    }))
+    expect(f.state().reports).toHaveLength(1)
+    expect(f.state().reports[0].id).toBe(1)
+    expect(f.state().consumptions).toEqual([{ reportId: 1, packageId: 1, hours: 7 }])
+  })
+
+  it('inserts a previously unseen report with a generated primary key, then updates that same row', async () => {
+    const f = fixture([])
+    await f.service.processReportWebhook(webhook())
+    await f.service.processReportWebhook(webhook())
+    expect(f.state().reports).toHaveLength(1)
+    expect(f.state().reports[0]).toMatchObject({ id: 1, bitrixReportId: reportId, hours: 7 })
+    expect(f.state().consumptions).toEqual([{ reportId: 1, packageId: 1, hours: 7 }])
   })
 
   it('removes an old deleted 80-hour report even outside the discovery window', async () => {

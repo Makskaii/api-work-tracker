@@ -65,7 +65,10 @@ export enum DailyReportCodes {
   parentId = 'parentId1072',
   company = 'ufCrm11_1775128268',
   parentproject = 'ufCrm11_1775128299',
+  includeInPackage = 'ufCrm11_1776177558677',
 }
+
+export const REPORT_ACTIVITY_IBLOCK_ID = 25
 
 export const Endpoints = {
   tasks: 'tasks.task.list',

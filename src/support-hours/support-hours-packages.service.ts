@@ -1,3 +1,4 @@
+import { SupportHoursPackageImpactService } from './support-hours-package-impact.service'
 import { BadGatewayException, BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common'
 import { timingSafeEqual } from 'crypto'
 import dayjs from 'dayjs'
@@ -75,9 +76,10 @@ export class SupportHoursPackagesService {
     @InjectRepository(ReportProject) private readonly projectsRepository: Repository<ReportProject>,
     @InjectRepository(SupportHoursPackage) private readonly packagesRepository: Repository<SupportHoursPackage>,
     @InjectRepository(SupportHoursReport) private readonly reportsRepository: Repository<SupportHoursReport>,
-    @InjectRepository(SupportHoursConsumption) private readonly consumptionsRepository: Repository<SupportHoursConsumption>,
+    @InjectRepository(SupportHoursConsumption) _consumptionsRepository: Repository<SupportHoursConsumption>,
     private readonly dataSource: DataSource,
     private readonly bitrixService: BitrixService,
+    private readonly impactService?: SupportHoursPackageImpactService,
   ) {}
 
   async findAll() {
@@ -329,38 +331,49 @@ export class SupportHoursPackagesService {
   async create(dto: CreateSupportHoursPackageDto) {
     return await this.enqueueMutation(async () => {
       const project = await this.findSupportProject(dto.projectId)
-      const item = await this.packagesRepository.save(this.packagesRepository.create({
-        projectId: project.id,
-        purchasedHours: this.round(dto.purchasedHours),
-        purchaseDate: dto.purchaseDate,
-        amount: dto.amount == null ? null : this.round(dto.amount),
-        comment: dto.comment?.trim() || null,
-      }))
-      await this.reallocateProject(project.id)
-      return item
+      return await this.dataSource.transaction(async (manager) => {
+        const repository = manager.getRepository(SupportHoursPackage)
+        const item = await repository.save(repository.create({
+          projectId: project.id,
+          purchasedHours: this.round(dto.purchasedHours),
+          purchaseDate: dto.purchaseDate,
+          amount: dto.amount == null ? null : this.round(dto.amount),
+          comment: dto.comment?.trim() || null,
+        }))
+        await this.reallocateProjectInTransaction(manager, project.id)
+        return item
+      })
     })
   }
 
-  async update(id: number, dto: UpdateSupportHoursPackageDto) {
+  async update(id: number, dto: UpdateSupportHoursPackageDto, fingerprint?: string) {
     return await this.enqueueMutation(async () => {
-      const item = await this.packagesRepository.findOne({ where: { id } })
-      if (!item) throw new NotFoundException('Support hours package not found')
-      if (dto.purchasedHours !== undefined) item.purchasedHours = this.round(dto.purchasedHours)
-      if (dto.purchaseDate !== undefined) item.purchaseDate = dto.purchaseDate
-      if (dto.amount !== undefined) item.amount = dto.amount == null ? null : this.round(dto.amount)
-      if (dto.comment !== undefined) item.comment = dto.comment?.trim() || null
-      const saved = await this.packagesRepository.save(item)
-      await this.reallocateProject(item.projectId)
-      return saved
+      await this.impactService?.assertPreview(id, { operation: 'update', changes: dto }, fingerprint)
+      return await this.dataSource.transaction(async (manager) => {
+        const repository = manager.getRepository(SupportHoursPackage)
+        const item = await repository.findOne({ where: { id } })
+        if (!item) throw new NotFoundException('Support hours package not found')
+        if (dto.purchasedHours !== undefined) item.purchasedHours = this.round(dto.purchasedHours)
+        if (dto.purchaseDate !== undefined) item.purchaseDate = dto.purchaseDate
+        if (dto.amount !== undefined) item.amount = dto.amount == null ? null : this.round(dto.amount)
+        if (dto.comment !== undefined) item.comment = dto.comment?.trim() || null
+        const saved = await repository.save(item)
+        await this.reallocateProjectInTransaction(manager, item.projectId)
+        return saved
+      })
     })
   }
 
-  async remove(id: number): Promise<void> {
+  async remove(id: number, fingerprint?: string): Promise<void> {
     return await this.enqueueMutation(async () => {
-      const item = await this.packagesRepository.findOne({ where: { id } })
-      if (!item) throw new NotFoundException('Support hours package not found')
-      await this.packagesRepository.remove(item)
-      await this.reallocateProject(item.projectId)
+      await this.impactService?.assertPreview(id, { operation: 'delete' }, fingerprint)
+      await this.dataSource.transaction(async (manager) => {
+        const repository = manager.getRepository(SupportHoursPackage)
+        const item = await repository.findOne({ where: { id } })
+        if (!item) throw new NotFoundException('Support hours package not found')
+        await repository.remove(item)
+        await this.reallocateProjectInTransaction(manager, item.projectId)
+      })
     })
   }
 
@@ -412,6 +425,7 @@ export class SupportHoursPackagesService {
         await this.applyReport(report.bitrixReportId, byId.get(report.bitrixReportId) ?? null)
       }
     }
+    this.supportProjectTasksCache.clear()
     return { processedReports: reports.length, synchronizedAt: new Date().toISOString() }
   }
 
@@ -572,10 +586,6 @@ export class SupportHoursPackagesService {
       title,
       projectType: ReportProjectType.Support,
     }))
-  }
-
-  private async reallocateProject(projectId: number): Promise<void> {
-    await this.dataSource.transaction((manager) => this.reallocateProjectInTransaction(manager, projectId))
   }
 
   private async reallocateProjectInTransaction(manager: EntityManager, projectId: number): Promise<void> {

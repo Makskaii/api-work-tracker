@@ -13,6 +13,7 @@ import {
 import type { SupportHoursPackage } from './entities/support-hours-package.entity'
 import type { SupportHoursPackageReportSnapshot } from './support-hours-package-report.types'
 import { SupportHoursPackagesService } from './support-hours-packages.service'
+import { SupportPackageChecksService } from './support-package-checks.service'
 
 dayjs.extend(utc)
 dayjs.extend(timezone)
@@ -137,10 +138,13 @@ export class SupportHoursPackageReportService {
   constructor(
     private readonly packagesService: SupportHoursPackagesService,
     private readonly pdfService: PdfService,
+    private readonly checksService: SupportPackageChecksService,
   ) {}
 
   async generate(packageId: number) {
     const snapshot = await this.packagesService.getReportSnapshot(packageId)
+    const checks = await this.checksService.inspect(snapshot)
+    if (checks.blocking) throw new BadRequestException({ message: 'Исправьте принадлежность отчётов проекту перед выгрузкой', issues: checks.issues })
     const data = buildSupportPackageReportData(snapshot)
     const [logo, watermark] = await Promise.all([
       this.readBrandImage('logo.jpg'),
@@ -148,7 +152,10 @@ export class SupportHoursPackageReportService {
     ])
     const html = buildSupportPackageReportHtml(data, watermark || undefined)
     const buffer = await this.pdfService.generatePdf(html, logo)
-    return { buffer, filename: `support-package-${packageId}-${data.asOfDate}.pdf` }
+    return { buffer, filename: `support-package-${packageId}-${data.asOfDate}.pdf`, snapshot: {
+      projectId: snapshot.projectId, projectTitle: data.projectTitle, clientName: data.clientName,
+      packageId: data.packageId, purchasedHours: data.purchasedHours, spentHours: data.spentHours, remainingHours: data.remainingHours,
+    } }
   }
 
   private async readBrandImage(filename: 'logo.jpg' | 'watermark.jpg'): Promise<string> {

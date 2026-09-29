@@ -197,8 +197,8 @@ describe('Package PDF response', () => {
   it('renders fresh package data and returns a binary attachment', async () => {
     const packages = { getReportSnapshot: jest.fn().mockResolvedValue(packageFixture([consumption(1, 7)])) }
     const pdf = { generatePdf: jest.fn().mockResolvedValue(Buffer.from('%PDF-test')) }
-    const reportService = new SupportHoursPackageReportService(packages as never, pdf as never)
-    const controller = new SupportHoursPackagesController({} as never, reportService)
+    const reportService = new SupportHoursPackageReportService(packages as never, pdf as never, { inspect: jest.fn().mockResolvedValue({ blocking: false }) } as never)
+    const controller = new SupportHoursPackagesController({} as never, reportService, {} as never, {} as never, {} as never, {} as never)
     const response = await controller.downloadPackageReport(10)
     expect(packages.getReportSnapshot).toHaveBeenCalledWith(10)
     const [html] = pdf.generatePdf.mock.calls[0]

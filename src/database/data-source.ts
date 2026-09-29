@@ -1,4 +1,5 @@
-﻿import 'dotenv/config'
+import { SupportHoursReportVersion } from '../support-hours/entities/support-hours-report-version.entity'
+import 'dotenv/config'
 import { DataSource } from 'typeorm'
 import { ClientPurchasedHoursEvent } from '../clients/entities/client-purchased-hours-event.entity'
 import { Client } from '../clients/entities/client.entity'
@@ -41,6 +42,7 @@ export default new DataSource({
     SupportHoursPackage,
     SupportHoursReport,
     SupportHoursConsumption,
+    SupportHoursReportVersion,
   ],
   migrations: [__dirname + '/migrations/**/*{.ts,.js}'],
   synchronize: false,

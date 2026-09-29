@@ -1,11 +1,15 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Header, HttpCode, Param, ParseIntPipe, Patch, Post, Query, StreamableFile } from '@nestjs/common'
 import { CreateSupportHoursPackageDto } from './dto/create-support-hours-package.dto'
 import { UpdateSupportHoursPackageDto } from './dto/update-support-hours-package.dto'
+import { SupportHoursPackageReportService } from './support-hours-package-report.service'
 import { SupportHoursPackagesService } from './support-hours-packages.service'
 
 @Controller('support-hours-packages')
 export class SupportHoursPackagesController {
-  constructor(private readonly service: SupportHoursPackagesService) {}
+  constructor(
+    private readonly service: SupportHoursPackagesService,
+    private readonly reportService: SupportHoursPackageReportService,
+  ) {}
 
   @Get()
   findAll() {
@@ -56,6 +60,18 @@ export class SupportHoursPackagesController {
   @HttpCode(204)
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id)
+  }
+
+  @Post(':id/report')
+  @HttpCode(200)
+  @Header('Cache-Control', 'no-store')
+  async downloadPackageReport(@Param('id', ParseIntPipe) id: number) {
+    const report = await this.reportService.generate(id)
+    return new StreamableFile(report.buffer, {
+      type: 'application/pdf',
+      disposition: `attachment; filename="${report.filename}"`,
+      length: report.buffer.length,
+    })
   }
 
   @Post('sync')

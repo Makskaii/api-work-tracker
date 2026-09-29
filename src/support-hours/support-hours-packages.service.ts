@@ -100,6 +100,22 @@ export class SupportHoursPackagesService {
     })
   }
 
+  async getReportSnapshot(packageId: number): Promise<SupportHoursPackage> {
+    if (this.positiveId(packageId) === null) throw new BadRequestException('A positive package ID is required')
+    if (!(await this.packagesRepository.findOne({ where: { id: packageId } }))) {
+      throw new NotFoundException('Support hours package not found')
+    }
+    await this.sync()
+    return await this.enqueueMutation(() => this.dataSource.transaction(async (manager) => {
+      const item = await manager.getRepository(SupportHoursPackage).findOne({
+        where: { id: packageId },
+        relations: { project: true, consumptions: { report: true } },
+      })
+      if (!item) throw new NotFoundException('Support hours package not found')
+      return item
+    }))
+  }
+
   async findSupportProjects() {
     return await this.projectsRepository.find({
       where: { projectType: ReportProjectType.Support },

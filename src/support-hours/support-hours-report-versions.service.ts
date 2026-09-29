@@ -108,6 +108,9 @@ export class SupportHoursReportVersionsService {
         const versionNumber = Number(last?.versionNumber ?? 0) + 1
         return repository.save(repository.create({
           requestId, packageId, versionNumber,
+          // MySQL's session clock can differ from the Node connection timezone.
+          // Persist the actual instant explicitly instead of its local NOW().
+          createdAt: new Date(),
           projectId: snapshot.projectId,
           projectTitle: snapshot.projectTitle,
           clientName: snapshot.clientName,

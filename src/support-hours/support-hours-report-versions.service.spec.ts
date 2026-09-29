@@ -30,7 +30,11 @@ describe('SupportHoursReportVersionsService', () => {
         .sort((a, b) => order ? b.versionNumber - a.versionNumber : 0)[0] ?? null,
     ))
     save = jest.fn((row: SupportHoursReportVersion) => {
-      const persisted = Object.assign(new SupportHoursReportVersion(), row, { id: rows.length + 1, createdAt: new Date() })
+      const persisted = Object.assign(new SupportHoursReportVersion(), row, {
+        id: rows.length + 1,
+        // Simulate a database default using Moscow local time as a UTC value.
+        createdAt: row.createdAt ?? new Date(Date.now() + 3 * 60 * 60 * 1000),
+      })
       rows.push(persisted)
       return Promise.resolve(persisted)
     })
@@ -55,7 +59,17 @@ describe('SupportHoursReportVersionsService', () => {
   })
 
   afterEach(async () => {
+    jest.useRealTimers()
     await rm(directory, { recursive: true, force: true })
+  })
+
+  it('persists the UTC creation instant explicitly instead of using the database session clock', async () => {
+    const actualTime = new Date('2026-09-29T10:46:00.000Z')
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] }).setSystemTime(actualTime)
+    const version = await service.create(7, { requestId: randomUUID() })
+    expect(save.mock.calls[0][0].createdAt).toEqual(actualTime)
+    expect(version.createdAt.toISOString()).toBe('2026-09-29T10:46:00.000Z')
+    expect((await service.list(31))[0].createdAt).toEqual(actualTime)
   })
 
   it('saves exact bytes and snapshot totals; later edits never regenerate a saved download', async () => {

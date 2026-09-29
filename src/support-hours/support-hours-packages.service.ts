@@ -16,6 +16,7 @@ import { SupportHoursPackage } from './entities/support-hours-package.entity'
 import { SupportHoursReport } from './entities/support-hours-report.entity'
 import { allocateSupportHours } from './support-hours-allocation'
 import type { SupportHoursPackageReportSnapshot, SupportPackageTaskContext } from './support-hours-package-report.types'
+import { parseWorkspaceReport, workspaceId, type SupportProjectWorkspace, type SupportWorkspaceTask } from './support-hours-workspace'
 
 dayjs.extend(utc)
 dayjs.extend(timezone)
@@ -239,6 +240,145 @@ export class SupportHoursPackagesService {
     if (stageId === TaskStageIds.done || stageId === 'DT1072_18:SUCCESS') return 'completed'
     if (stageId === 'DT1072_18:UC_JP9WR1' || stageId === 'DT1072_18:FAIL') return 'cancelled'
     return Object.values(TaskStageIds).some((knownStage) => knownStage === stageId) ? 'in_work' : 'unknown'
+  }
+
+  async getProjectWorkspace(projectId: number): Promise<SupportProjectWorkspace> {
+    return await this.enqueueMutation(async () => {
+      const project = await this.findSupportProject(projectId)
+      const sourceProjectId = workspaceId(project.bitrixProjectId)
+      const liveProject = await this.bitrixService.getItem<BitrixProject>({ entityTypeId: EntityTypeIds.projects, id: Number(sourceProjectId) })
+      if (!liveProject || workspaceId(liveProject.id) !== sourceProjectId || !Object.hasOwn(liveProject, PROJECT_TYPE)) throw new BadGatewayException('Не удалось проверить проект в Битриксе')
+      if (!this.isSupportProject(liveProject[PROJECT_TYPE])) throw new BadRequestException('Проект больше не относится к техподдержке. Обновите данные')
+
+      // No activity window or accounting flag: the analyst must see old and excluded reports too.
+      const [sourceReports, sourceTasks, previousReports] = await Promise.all([
+        this.bitrixService.listAllItems<Record<string, unknown>>({ entityTypeId: EntityTypeIds.reports, filter: { [DailyReportCodes.parentproject]: Number(sourceProjectId) }, select: REPORT_SELECT }),
+        this.bitrixService.listAllItems<Record<string, unknown>>({ entityTypeId: EntityTypeIds.tasks, filter: { [TaskCodes.parentproject]: Number(sourceProjectId) }, select: ['id', 'title', 'stageId', TaskCodes.parentproject] }),
+        this.reportsRepository.find({ where: { projectId } }),
+      ])
+      const reports = sourceReports.map(parseWorkspaceReport)
+      const reportIds = new Set<string>()
+      for (const report of reports) {
+        if (report.projectId !== sourceProjectId || reportIds.has(report.id)) throw new BadGatewayException('Битрикс вернул некорректный список отчётов проекта')
+        reportIds.add(report.id)
+      }
+      const tasks = new Map<string, SupportWorkspaceTask>()
+      const readTask = (task: Record<string, unknown>): SupportWorkspaceTask => {
+        if (!task || typeof task !== 'object' || Array.isArray(task)) throw new BadGatewayException('Битрикс вернул некорректную задачу')
+        const id = workspaceId(task.id)
+        if (typeof task.title !== 'string' || (task.stageId != null && typeof task.stageId !== 'string')) throw new BadGatewayException('Битрикс вернул некорректную задачу')
+        return { id, title: task.title.trim() || `Задача №${id}`, stageId: task.stageId as string | null ?? null }
+      }
+      for (const task of sourceTasks) {
+        const parsed = readTask(task)
+        if (workspaceId(task[TaskCodes.parentproject]) !== sourceProjectId || tasks.has(parsed.id)) throw new BadGatewayException('Битрикс вернул некорректный список задач проекта')
+        tasks.set(parsed.id, parsed)
+      }
+
+      // A missing project row may have moved to another project. Recheck by ID before removing it.
+      const absentIds = previousReports.filter((report) => !reportIds.has(report.bitrixReportId)).map((report) => report.bitrixReportId)
+      const movedReports: { id: string; prepared: SupportHoursReport | null }[] = []
+      for (let offset = 0; offset < absentIds.length; offset += REPORT_RECHECK_BATCH_SIZE) {
+        const batch = absentIds.slice(offset, offset + REPORT_RECHECK_BATCH_SIZE)
+        const current = await this.bitrixService.listAllItems<BitrixSupportReport>({ entityTypeId: EntityTypeIds.reports, filter: { '@id': batch }, select: REPORT_SELECT })
+        const seen = new Set<string>()
+        for (const report of current) {
+          const id = workspaceId(report.id)
+          if (!batch.includes(id) || seen.has(id)) throw new BadGatewayException('Битрикс вернул некорректные данные сверки отчётов')
+          seen.add(id)
+          const parsed = parseWorkspaceReport(report as Record<string, unknown>)
+          // The source changed during pagination; do not treat that as a deletion.
+          if (parsed.projectId === sourceProjectId) throw new BadGatewayException('Данные проекта изменились во время загрузки. Обновите данные ещё раз')
+          movedReports.push({ id, prepared: parsed.projectId && parsed.includeInPackage && parsed.hours > 0 ? await this.prepareEligibleReport(report) : null })
+        }
+      }
+
+      const taskMetadata = new Map(tasks)
+      const foreignTaskIds = [...new Set(reports.map((report) => report.taskId).filter((id): id is string => !!id && !tasks.has(id)))]
+      for (let offset = 0; offset < foreignTaskIds.length; offset += REPORT_RECHECK_BATCH_SIZE) {
+        const batch = foreignTaskIds.slice(offset, offset + REPORT_RECHECK_BATCH_SIZE)
+        const current = await this.bitrixService.listAllItems<Record<string, unknown>>({ entityTypeId: EntityTypeIds.tasks, filter: { '@id': batch }, select: ['id', 'title', 'stageId'] })
+        for (const task of current) {
+          const parsed = readTask(task)
+          if (!batch.includes(parsed.id) || taskMetadata.has(parsed.id)) throw new BadGatewayException('Битрикс вернул некорректную привязку задачи')
+          taskMetadata.set(parsed.id, parsed)
+        }
+      }
+      const userNames = new Map<string, string>()
+      const userIds = [...new Set(reports.map((report) => report.responsibleId).filter((id): id is string => !!id))]
+      for (let offset = 0; offset < userIds.length; offset += REPORT_RECHECK_BATCH_SIZE) {
+        const batch = userIds.slice(offset, offset + REPORT_RECHECK_BATCH_SIZE)
+        for (const user of await this.bitrixService.getUsersByIds(batch.map(Number))) userNames.set(String(user.id), user.title)
+      }
+      const companyNames = new Map<string, string | null>()
+      const activityNames = new Map<string, string | null>()
+      for (const id of new Set(reports.map((report) => report.companyId).filter((id): id is string => !!id))) {
+        companyNames.set(id, (await this.bitrixService.getCompany<{ TITLE?: string }>(Number(id)))?.TITLE?.trim() || null)
+      }
+      for (const id of new Set(reports.map((report) => report.activityId).filter((id): id is string => !!id))) {
+        activityNames.set(id, await this.bitrixService.getListElementTitle(REPORT_ACTIVITY_IBLOCK_ID, Number(id)))
+      }
+      const preparedReports = reports.filter((report) => report.includeInPackage && report.hours > 0).map((report) => this.reportsRepository.create({
+        bitrixReportId: report.id, projectId, hours: report.hours, reportDate: report.reportDate, lastActivityAt: report.lastActivityAt,
+        reportTitle: report.title, reportDescription: report.description, bitrixTaskId: report.taskId,
+        taskTitle: report.taskId ? taskMetadata.get(report.taskId)?.title ?? null : null,
+        bitrixResponsibleId: report.responsibleId, responsibleName: report.responsibleId ? userNames.get(report.responsibleId) ?? null : null,
+        bitrixCompanyId: report.companyId, companyName: report.companyId ? companyNames.get(report.companyId) ?? null : null,
+        projectTitle: liveProject.title?.trim() || project.title, bitrixActivityId: report.activityId,
+        activityTitle: report.activityId ? activityNames.get(report.activityId) ?? null : null,
+      }))
+
+      const result = await this.dataSource.transaction(async (manager) => {
+        const repository = manager.getRepository(SupportHoursReport)
+        const incoming = [...preparedReports, ...movedReports.flatMap((report) => report.prepared ? [report.prepared] : [])]
+        const known = incoming.length ? await repository.find({ where: { bitrixReportId: In(incoming.map((report) => report.bitrixReportId)) } }) : []
+        const affectedProjects = new Set<number>([projectId])
+        const retainedIds = new Set(incoming.map((report) => report.bitrixReportId))
+        for (const existing of previousReports) {
+          if (!retainedIds.has(existing.bitrixReportId)) await repository.remove(existing)
+        }
+        for (const prepared of incoming) {
+          const existing = known.find((report) => report.bitrixReportId === prepared.bitrixReportId)
+          if (existing) affectedProjects.add(Number(existing.projectId))
+          affectedProjects.add(Number(prepared.projectId))
+          await repository.save(repository.merge(existing ?? repository.create({ bitrixReportId: prepared.bitrixReportId }), prepared))
+        }
+        for (const affectedProject of affectedProjects) await this.reallocateProjectInTransaction(manager, affectedProject)
+        const packages = await manager.getRepository(SupportHoursPackage).find({
+          where: { projectId }, relations: { consumptions: { report: true } }, order: { purchaseDate: 'ASC', id: 'ASC' },
+        })
+        const allocations = new Map<string, { purchaseId: number; purchaseDate: string; hours: number }[]>()
+        for (const item of packages) for (const row of item.consumptions) {
+          const id = row.report.bitrixReportId
+          allocations.set(id, [...allocations.get(id) ?? [], { purchaseId: Number(item.id), purchaseDate: item.purchaseDate, hours: this.toNumber(row.hours) }])
+        }
+        const purchasedHours = this.round(packages.reduce((sum, item) => sum + this.toNumber(item.purchasedHours), 0))
+        const consumedHours = this.round(packages.reduce((sum, item) => sum + item.consumptions.reduce((hours, row) => hours + this.toNumber(row.hours), 0), 0))
+        const remainingHours = this.round(purchasedHours - consumedHours)
+        const lastChargeAt = packages.flatMap((item) => item.consumptions).toSorted((first, second) => second.report.reportDate.getTime() - first.report.reportDate.getTime()).at(0)?.report.reportDate ?? null
+        return {
+          projectId, tasks: [...tasks.values()].sort((first, second) => first.title.localeCompare(second.title, 'ru')),
+          reports: reports.sort((first, second) => second.reportDate.getTime() - first.reportDate.getTime() || Number(second.id) - Number(first.id)).map((report) => {
+            const rows = report.includeInPackage ? allocations.get(report.id) ?? [] : []
+            const allocatedHours = this.round(rows.reduce((sum, row) => sum + row.hours, 0))
+            return {
+              id: report.id, taskId: report.taskId, taskTitle: report.taskId ? taskMetadata.get(report.taskId)?.title ?? null : null,
+              responsibleName: report.responsibleId ? userNames.get(report.responsibleId) ?? null : null,
+              date: dayjs(report.reportDate).tz('Europe/Moscow').format('YYYY-MM-DD'), hours: report.hours,
+              title: report.title, description: report.description, includeInPackage: report.includeInPackage, allocations: rows,
+              allocatedHours, unallocatedHours: report.includeInPackage ? this.round(Math.max(0, report.hours - allocatedHours)) : 0,
+            }
+          }),
+          packageGroup: {
+            project: { ...project, title: liveProject.title?.trim() || project.title }, purchasedHours, consumedHours, remainingHours,
+            state: remainingHours < 0 ? 'overdue' : remainingHours === 0 ? 'empty' : remainingHours <= purchasedHours * 0.1 ? 'ending' : 'active', lastChargeAt,
+            packages: packages.map((item) => ({ ...item, project, remainingHours: this.round(this.toNumber(item.purchasedHours) - item.consumptions.reduce((sum, row) => sum + this.toNumber(row.hours), 0)) })),
+          },
+        }
+      })
+      this.supportProjectTasksCache.delete(projectId)
+      return result
+    })
   }
 
   async findSupportProjects() {

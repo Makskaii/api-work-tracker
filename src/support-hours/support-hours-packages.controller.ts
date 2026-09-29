@@ -37,6 +37,12 @@ export class SupportHoursPackagesController {
     return this.service.findSupportProjectTasks(id)
   }
 
+  @Get('projects/:id/workspace')
+  @Header('Cache-Control', 'no-store')
+  getProjectWorkspace(@Param('id', ParseIntPipe) id: number) {
+    return this.service.getProjectWorkspace(id)
+  }
+
   @Get('reports/form-options')
   formOptions() { return this.editorService.formOptions() }
 

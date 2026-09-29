@@ -9,15 +9,18 @@ const sample: SupportPackageReportData = {
 }
 
 describe('support package PDF content', () => {
-  it('shows the whole package with its as-of date, actual charged hours and both report kinds', () => {
+  it('shows actual work and package hours without exposing work or package dates', () => {
     const html = buildSupportPackageReportHtml(sample)
-    expect(html).toContain('Пакет №7 от 01.09.2026')
-    expect(html).toContain('По состоянию на 29.09.2026')
+    expect(html).toContain('Пакет №7')
+    expect(html).not.toContain('01.09.2026')
+    expect(html).not.toContain('29.09.2026')
+    expect(html).not.toContain('2026-09')
+    expect(html).not.toContain('<th>Дата</th>')
     expect(html).toContain('14,5 ч')
     expect(html).toContain('65,5 ч')
     expect(html).toContain('Сохранены комментарии')
     expect(html).toContain('Настроены права')
-    expect(html).toContain('Отчётов: 2')
+    expect(html).toContain('Всего списано')
     expect(html).not.toContain('Неделя')
     expect(html).not.toContain('Коммуникации')
   })

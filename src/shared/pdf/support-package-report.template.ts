@@ -28,22 +28,16 @@ const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (character) => (
 }[character] ?? character))
 
 const hours = (value: number) => `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value)} ч`
-const date = (value: string) => {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
-  return match ? `${match[3]}.${match[2]}.${match[1]}` : value
-}
-
 const reportRows = (reports: SupportPackageReportRow[]) => reports.map((report) => `
   <tr>
-    <td class="report-date">${escapeHtml(date(report.date))}</td>
     <td class="report-description">${escapeHtml(report.description || `Отчёт №${report.id}`)}</td>
     <td class="report-hours">${escapeHtml(hours(report.hours))}</td>
   </tr>`).join('')
 
 const reportTable = (reports: SupportPackageReportRow[]) => `
   <table class="reports-table">
-    <colgroup><col class="date-column"><col><col class="hours-column"></colgroup>
-    <thead><tr><th>Дата</th><th>Выполненные работы</th><th class="report-hours">Часы</th></tr></thead>
+    <colgroup><col><col class="hours-column"></colgroup>
+    <thead><tr><th>Выполненные работы</th><th class="report-hours">Часы</th></tr></thead>
     <tbody>${reportRows(reports)}</tbody>
   </table>`
 
@@ -89,12 +83,11 @@ export const buildSupportPackageReportHtml = (data: SupportPackageReportData, wa
     h3 { flex: 1; min-width: 0; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
     .task-heading strong { white-space: nowrap; color: #316f74; }
     .reports-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-    .date-column { width: 87px; } .hours-column { width: 70px; }
+    .hours-column { width: 70px; }
     .reports-table thead { display: table-header-group; }
     .reports-table th { background: #f5f7f7; font-size: 10px; font-weight: 400; color: #626970; text-align: left; }
     .reports-table th, .reports-table td { border: 1px solid #d5e1e1; padding: 8px 10px; vertical-align: top; }
     .reports-table tr { break-inside: avoid; page-break-inside: avoid; }
-    .report-date { font-size: 10px; white-space: nowrap; color: #626970; }
     .report-description { white-space: pre-wrap; overflow-wrap: anywhere; }
     .reports-table .report-hours { text-align: right; white-space: nowrap; }
     .totals { display: flex; justify-content: space-between; gap: 20px; margin-top: 20px; padding-top: 10px; border-top: 2px solid #3c868c; font-weight: 700; break-inside: avoid; }
@@ -106,13 +99,13 @@ export const buildSupportPackageReportHtml = (data: SupportPackageReportData, wa
   <h1>Отчёт по пакету часов</h1>
   <p class="project-name">${escapeHtml(data.projectTitle)}</p>
   ${data.clientName ? `<p class="client-name">${escapeHtml(data.clientName)}</p>` : ''}
-  <p class="report-meta">Пакет №${data.packageId} от ${escapeHtml(date(data.purchaseDate))}<br>По состоянию на ${escapeHtml(date(data.asOfDate))}</p>
+  <p class="report-meta">Пакет №${data.packageId}</p>
   <table class="summary-table"><thead><tr><th>Объём пакета</th><th>Потрачено</th><th>Осталось</th></tr></thead>
   <tbody><tr><td>${escapeHtml(hours(data.purchasedHours))}</td><td>${escapeHtml(hours(data.spentHours))}</td><td class="${data.remainingHours < 0 ? 'negative' : ''}">${escapeHtml(hours(data.remainingHours))}</td></tr></tbody></table>
-  <p class="scope-note">Учтены списания из выбранного пакета по ${escapeHtml(date(data.asOfDate))} включительно. Если работа оплачена из нескольких пакетов, здесь показаны только часы этого пакета.</p>
+  <p class="scope-note">Учтены списания из выбранного пакета. Если работа оплачена из нескольких пакетов, здесь показаны только часы этого пакета.</p>
   ${tasksHtml ? `<h2>Работы по задачам</h2>${tasksHtml}` : ''}
   ${data.reportsWithoutTask.length ? `<h2>Отдельные работы</h2>${reportTable(data.reportsWithoutTask)}` : ''}
   ${reportCount === 0 ? '<p class="empty">В этом пакете пока нет списаний за выполненные работы.</p>' : ''}
-  <div class="totals"><span>Отчётов: ${reportCount}</span><span>Всего списано: ${escapeHtml(hours(data.spentHours))}</span></div>
+  <div class="totals"><span>Всего списано</span><span>${escapeHtml(hours(data.spentHours))}</span></div>
 </main></body></html>`
 }

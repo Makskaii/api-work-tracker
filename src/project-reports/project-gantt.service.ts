@@ -65,6 +65,7 @@ export class ProjectGanttService {
     projectId: string,
     dto: CreateProjectGanttStageDto,
   ): Promise<ProjectGanttStage> {
+    this.assertPlannedHours(dto.plannedHours)
     const isGroup = dto.isGroup ?? false
     this.assertGroupFields(dto, isGroup)
     const stageType = dto.stageType ?? null
@@ -94,6 +95,7 @@ export class ProjectGanttService {
           !isGroup && dto.dependsOnStageId
             ? (dto.dependencyAnchor ?? ProjectGanttDependencyAnchor.StageEnd)
             : null,
+        plannedHours: dto.plannedHours ?? null,
         durationDays: isGroup ? null : (dto.durationDays ?? null),
         sortOrder: dto.sortOrder ?? 0,
         isDefault: false,
@@ -113,6 +115,11 @@ export class ProjectGanttService {
     dto: UpdateProjectGanttStageDto,
   ): Promise<ProjectGanttStage> {
     const stage = await this.findStageOrFail(stageId)
+    this.assertPlannedHours(dto.plannedHours)
+    if (stage.code === DEFAULT_PAYMENTS_STAGE_CODE &&
+        (dto.plannedHours !== undefined || dto.groupStatus !== undefined)) {
+      throw new BadRequestException('Плановые часы и статус работ не относятся к строке оплат')
+    }
 
     if (dto.isGroup !== undefined && dto.isGroup !== stage.isGroup) {
       throw new BadRequestException(
@@ -168,6 +175,10 @@ export class ProjectGanttService {
         : null
     }
 
+    if (dto.plannedHours !== undefined) {
+      stage.plannedHours = dto.plannedHours
+    }
+
     if (dto.durationDays !== undefined) {
       stage.durationDays = dto.durationDays ?? null
     }
@@ -181,7 +192,10 @@ export class ProjectGanttService {
     }
 
     const savedStage = await this.stagesRepository.save(stage)
-    await this.ensureStageEvent(savedStage)
+    // An hours/status edit must not change dates, events, child statuses or payments.
+    if (dto.title !== undefined || dto.stageType !== undefined || dto.sortOrder !== undefined) {
+      await this.ensureStageEvent(savedStage)
+    }
 
     return savedStage
   }
@@ -574,10 +588,15 @@ export class ProjectGanttService {
       return
     }
 
-    if (dto.groupStatus !== undefined) {
-      throw new BadRequestException(
-        'Group status can be changed only for a parent stage',
-      )
+    // The legacy field name is retained for API compatibility. Both a stage and
+    // a substage now have an independently user-controlled completion status.
+  }
+
+  private assertPlannedHours(value: number | null | undefined): void {
+    if (value == null) return
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1000000 ||
+        Math.abs(value * 100 - Math.round(value * 100)) > 0.000001) {
+      throw new BadRequestException('Плановые часы: число от 0 до 1000000, не более двух знаков после запятой')
     }
   }
 

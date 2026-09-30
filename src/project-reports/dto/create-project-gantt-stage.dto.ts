@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer'
-import { IsBoolean, IsEnum, IsInt, IsOptional, IsString, Min } from 'class-validator'
+import { IsBoolean, IsEnum, IsInt, IsNumber, IsOptional, IsString, Max, Min, ValidateIf } from 'class-validator'
 import {
   ProjectGanttDependencyAnchor,
   ProjectGanttGroupStatus,
@@ -8,10 +8,16 @@ import {
 
 export class CreateProjectGanttStageDto {
   @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2, allowInfinity: false, allowNaN: false })
+  @Min(0)
+  @Max(1000000)
+  plannedHours?: number | null
+
+  @IsOptional()
   @IsBoolean()
   isGroup?: boolean
 
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsEnum(ProjectGanttGroupStatus)
   groupStatus?: ProjectGanttGroupStatus
 

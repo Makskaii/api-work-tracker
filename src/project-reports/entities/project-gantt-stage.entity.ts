@@ -77,6 +77,16 @@ export class ProjectGanttStage {
   })
   dependencyAnchor!: ProjectGanttDependencyAnchor | null
 
+  // Null means not estimated, while zero is an explicit zero-hour milestone.
+  @Column({
+    name: 'planned_hours', type: 'decimal', precision: 10, scale: 2, nullable: true,
+    transformer: {
+      to: (value: number | null) => value,
+      from: (value: string | number | null) => value == null ? null : Number(value),
+    },
+  })
+  plannedHours!: number | null
+
   @Column({ name: 'duration_days', type: 'int', unsigned: true, nullable: true })
   durationDays!: number | null
 

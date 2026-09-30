@@ -159,6 +159,74 @@ describe('Support hours authoritative report reconciliation', () => {
     expect(f.state().consumptions).toEqual([{ reportId: 1, packageId: 1, hours: 7 }])
   })
 
+  it('reads shared metadata once per sync while keeping each report and the next sync fresh', async () => {
+    const initial = [80, 81, 82].map((id, index) => ({ ...cachedReport(), id: index + 1, bitrixReportId: String(id) }))
+    const f = fixture(initial)
+    let version = 1
+    let excludedId: string | null = null
+    f.bitrix.listAllItems.mockImplementation(({ entityTypeId, filter }) => {
+      if (entityTypeId === EntityTypeIds.tasks) return Promise.resolve([{ id: 1002, title: `Task ${version}` }])
+      if (!filter['@id']) return Promise.resolve([])
+      return Promise.resolve(initial.map((report) => liveReport({
+        id: report.bitrixReportId, assignedById: 3,
+        [DailyReportCodes.parentId]: 1002, [DailyReportCodes.company]: 200,
+        [DailyReportCodes.activityType]: 300, [DailyReportCodes.timeSpent]: 6 + version,
+        [SUPPORT_FLAG]: report.bitrixReportId === excludedId ? 'N' : 'Y',
+      })))
+    })
+    f.bitrix.getItem.mockImplementation(async ({ id }) => ({ id, title: `Project ${version}`, ufCrm20_1781683772: '410' }))
+    f.bitrix.getUsersByIds.mockImplementation(async () => [{ id: '3', title: `Person ${version}` }])
+    f.bitrix.getCompany.mockImplementation(async () => ({ TITLE: `Company ${version}` }))
+    f.bitrix.getListElementTitle.mockImplementation(async () => `Activity ${version}`)
+
+    await f.service.sync()
+    expect(f.state().reports).toHaveLength(3)
+    expect(f.state().reports.every((report) => report.hours === 7 && report.taskTitle === 'Task 1')).toBe(true)
+    expect(f.state().consumptions.reduce((sum, row) => sum + row.hours, 0)).toBe(21)
+    expect(f.bitrix.getItem).toHaveBeenCalledTimes(1)
+    expect(f.bitrix.listAllItems.mock.calls.filter(([request]) => request.entityTypeId === EntityTypeIds.tasks)).toHaveLength(1)
+    expect(f.bitrix.getUsersByIds).toHaveBeenCalledTimes(1)
+    expect(f.bitrix.getCompany).toHaveBeenCalledTimes(1)
+    expect(f.bitrix.getListElementTitle).toHaveBeenCalledTimes(1)
+
+    version = 2
+    excludedId = '82'
+    await f.service.sync()
+    expect(f.state().reports).toHaveLength(2)
+    for (const report of f.state().reports) expect(report).toMatchObject({
+      hours: 8, taskTitle: 'Task 2', responsibleName: 'Person 2',
+      companyName: 'Company 2', activityTitle: 'Activity 2', projectTitle: 'Project 2',
+    })
+    expect(f.state().consumptions.reduce((sum, row) => sum + row.hours, 0)).toBe(16)
+    expect(f.bitrix.getItem).toHaveBeenCalledTimes(2)
+    expect(f.bitrix.listAllItems.mock.calls.filter(([request]) => request.entityTypeId === EntityTypeIds.tasks)).toHaveLength(2)
+    expect(f.bitrix.getUsersByIds).toHaveBeenCalledTimes(2)
+    expect(f.bitrix.getCompany).toHaveBeenCalledTimes(2)
+    expect(f.bitrix.getListElementTitle).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not retain a failed metadata request for a retry', async () => {
+    const f = fixture()
+    f.bitrix.listAllItems.mockImplementation(async ({ filter }) => filter['@id'] ? [liveReport()] : [])
+    f.bitrix.getItem.mockRejectedValueOnce(new BadGatewayException('Project unavailable'))
+    await expect(f.service.sync()).rejects.toThrow('Project unavailable')
+    expect(f.state().reports[0].hours).toBe(80)
+    await f.service.sync()
+    expect(f.state().reports[0].hours).toBe(7)
+    expect(f.bitrix.getItem).toHaveBeenCalledTimes(2)
+  })
+
+  it('rechecks project eligibility on every sync rather than caching it between requests', async () => {
+    const f = fixture()
+    f.bitrix.listAllItems.mockImplementation(async ({ filter }) => filter['@id'] ? [liveReport()] : [])
+    await f.service.sync()
+    expect(f.state().reports[0].hours).toBe(7)
+    f.bitrix.getItem.mockResolvedValueOnce({ id: '101', title: 'Project 1', ufCrm20_1781683772: '409' } as never)
+    await f.service.sync()
+    expect(f.state()).toEqual({ reports: [], consumptions: [] })
+    expect(f.bitrix.getItem).toHaveBeenCalledTimes(2)
+  })
+
   it('retains an eligible report if its linked task has been deleted', async () => {
     const f = fixture()
     f.bitrix.getItem.mockResolvedValueOnce(liveReport({ [DailyReportCodes.parentId]: '1002' }) as never)
@@ -232,7 +300,7 @@ describe('Support hours authoritative report reconciliation', () => {
   it('finishes earlier report allocations if a later report fails, then recovers on retry', async () => {
     const second = { ...cachedReport(), id: 2, bitrixReportId: '81' }
     const f = fixture([cachedReport(), second])
-    f.bitrix.listAllItems.mockResolvedValueOnce([]).mockResolvedValueOnce([liveReport(), liveReport({ id: '81' })])
+    f.bitrix.listAllItems.mockResolvedValueOnce([]).mockResolvedValueOnce([liveReport(), liveReport({ id: '81', [DailyReportCodes.parentproject]: '102' })])
     f.bitrix.getItem.mockResolvedValueOnce({ id: 101, title: 'Project 1', ufCrm20_1781683772: '410' } as never).mockRejectedValueOnce(new BadGatewayException('Project unavailable'))
     await expect(f.service.sync()).rejects.toThrow('Project unavailable')
     expect(f.state().reports.map((report) => report.hours)).toEqual([7, 80])

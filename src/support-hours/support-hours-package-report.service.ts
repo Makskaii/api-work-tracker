@@ -62,16 +62,10 @@ export function buildSupportPackageReportData(item: SupportHoursPackage & Partia
     if (companyName) companyNames.add(companyName)
   }
   const tasks = new Map<string, SupportPackageReportData['tasks'][number]>()
-  const reportsWithoutTask: SupportPackageReportRow[] = []
-  const ordered = [...reports.values()].sort((first, second) => first.row.date.localeCompare(second.row.date) || first.row.id.localeCompare(second.row.id, undefined, { numeric: true }))
-  for (const report of ordered) {
-    if (!report.taskId) {
-      reportsWithoutTask.push(report.row)
-      continue
-    }
-    const task = tasks.get(report.taskId) ?? {
-      id: report.taskId,
-      title: report.taskTitle || `Задача №${report.taskId}`,
+  const ensureTask = (id: string, title: string | null) => {
+    const task: SupportPackageReportData['tasks'][number] = tasks.get(id) ?? {
+      id,
+      title: title || `Задача №${id}`,
       hours: 0,
       status: 'unknown',
       soldHours: null,
@@ -80,14 +74,24 @@ export function buildSupportPackageReportData(item: SupportHoursPackage & Partia
       otherPackageReports: [],
       unallocatedReports: [],
     }
+    tasks.set(id, task)
+    return task
+  }
+  const reportsWithoutTask: SupportPackageReportRow[] = []
+  const ordered = [...reports.values()].sort((first, second) => first.row.date.localeCompare(second.row.date) || first.row.id.localeCompare(second.row.id, undefined, { numeric: true }))
+  for (const report of ordered) {
+    if (!report.taskId) {
+      reportsWithoutTask.push(report.row)
+      continue
+    }
+    const task = ensureTask(report.taskId, report.taskTitle)
     task.reports.push(report.row)
     task.hours = roundHours(task.hours + report.row.hours)
     task.totalHours = task.hours
-    tasks.set(report.taskId, task)
   }
   for (const context of item.taskContexts ?? []) {
-    const task = tasks.get(context.id)
-    // A task appears only when the selected package has charges for it.
+    const task = tasks.get(context.id) ?? (context.assignedToPackage ? ensureTask(context.id, context.title) : null)
+    // Explicit package assignments remain visible before the first charge.
     if (!task) continue
     task.title = context.title || task.title
     task.status = context.status

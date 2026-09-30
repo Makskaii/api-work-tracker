@@ -23,6 +23,11 @@ const liveReport = (id: number, taskId = '1002', hours = 2, date = '2025-01-01T1
 })
 
 function fixture() {
+  const taskAssignments: SupportTaskAssignment[] = []
+  const taskAssignmentRepo = {
+    find: jest.fn(({ where }) => Promise.resolve(taskAssignments.filter((assignment) =>
+      assignment.projectId === where.projectId && (where.packageId === undefined || assignment.packageId === where.packageId)))),
+  }
   let reports = [report(1, '1002', 4), report(2, '1002', 2, '2026-09-02T10:00:00Z')]
   let rows = [
     { reportId: 1, packageId: 1, hours: 3 },
@@ -68,7 +73,8 @@ function fixture() {
       if (entity === SupportHoursPackage) return packageRepo
       if (entity === SupportHoursReport) return reportRepo
       if (entity === SupportHoursConsumption) return consumptionRepo
-      if (entity === SupportHoursAssignment || entity === SupportTaskAssignment) return { find: jest.fn().mockResolvedValue([]) }
+      if (entity === SupportHoursAssignment) return { find: jest.fn().mockResolvedValue([]) }
+      if (entity === SupportTaskAssignment) return taskAssignmentRepo
       if (entity === SupportHoursTransfer) return { findOne: jest.fn().mockResolvedValue(null) }
       throw new Error('Unexpected repository')
     },
@@ -92,7 +98,7 @@ function fixture() {
   const service = new SupportHoursPackagesService(projectRepo as never, packageRepo as never, reportRepo as never, consumptionRepo as never, dataSource as never, bitrix as never)
   const sync = jest.spyOn(service, 'sync').mockResolvedValue({ processedReports: 0, synchronizedAt: now.toISOString() })
   return {
-    service, bitrix, reportRepo, sync,
+    service, bitrix, reportRepo, sync, taskAssignments, taskAssignmentRepo,
     setHistory: (value: typeof history) => { history = value },
     setMetadata: (value: typeof metadata) => { metadata = value },
     setStored: (value: typeof reports, allocations: typeof rows) => { reports = value; rows = allocations },
@@ -135,6 +141,50 @@ describe('Support package current task contexts', () => {
       entityTypeId: EntityTypeIds.reports,
       filter: { [FLAG]: 1, [DailyReportCodes.parentproject]: 101, [`@${DailyReportCodes.parentId}`]: ['1002'] },
     }))
+  })
+
+  it('includes an explicitly assigned task before its first report without charging its estimate', async () => {
+    const f = fixture()
+    f.setStored([], [])
+    f.taskAssignments.push(Object.assign(new SupportTaskAssignment(), { projectId: 1, packageId: 2, bitrixTaskId: '1002' }))
+    const snapshot = await f.service.getReportSnapshot(2)
+    expect(snapshot.taskContexts).toEqual([expect.objectContaining({
+      id: '1002', title: 'Current task', status: 'in_work', soldHours: 30, assignedToPackage: true, reports: [],
+    })])
+    expect(snapshot.consumptions).toEqual([])
+    expect(snapshot.purchasedHours).toBe(10)
+    expect(f.taskAssignmentRepo.find).toHaveBeenCalledWith({ where: { projectId: 1, packageId: 2 }, order: { id: 'ASC' } })
+  })
+
+  it('seeds only assignments to the selected package and project, excluding unallocated and moved tasks', async () => {
+    const f = fixture()
+    f.setStored([], [])
+    f.taskAssignments.push(...[
+      { projectId: 1, packageId: 1, bitrixTaskId: '1002' },
+      { projectId: 1, packageId: null, bitrixTaskId: '1003' },
+      { projectId: 9, packageId: 2, bitrixTaskId: '1004' },
+    ].map((value) => Object.assign(new SupportTaskAssignment(), value)))
+    expect((await f.service.getReportSnapshot(2)).taskContexts).toEqual([])
+    expect(f.bitrix.listAllItems).not.toHaveBeenCalled()
+  })
+
+  it('merges assigned and charged task IDs without duplicate contexts or history requests', async () => {
+    const f = fixture()
+    f.taskAssignments.push(Object.assign(new SupportTaskAssignment(), { projectId: 1, packageId: 2, bitrixTaskId: '1002' }))
+    const snapshot = await f.service.getReportSnapshot(2)
+    expect(snapshot.taskContexts).toHaveLength(1)
+    expect(snapshot.taskContexts[0]).toMatchObject({ id: '1002', assignedToPackage: true })
+    const historyQueries = f.bitrix.listAllItems.mock.calls.filter(([query]) => query.entityTypeId === EntityTypeIds.reports)
+    expect(historyQueries.map(([query]) => query.filter[`@${DailyReportCodes.parentId}`])).toEqual([['1002']])
+    expect(snapshot.consumptions.reduce((sum, row) => sum + row.hours, 0)).toBe(3)
+  })
+
+  it('keeps an assigned task with future reports visible but excludes future hours', async () => {
+    const f = fixture()
+    f.setStored([report(1, '1002', 2, '2026-10-01T10:00:00Z')], [{ reportId: 1, packageId: 2, hours: 2 }])
+    f.taskAssignments.push(Object.assign(new SupportTaskAssignment(), { projectId: 1, packageId: 2, bitrixTaskId: '1002' }))
+    const snapshot = await f.service.getReportSnapshot(2)
+    expect(snapshot.taskContexts).toEqual([expect.objectContaining({ id: '1002', assignedToPackage: true, reports: [] })])
   })
 
   it('discovers newly exposed task history after older reports redistribute package allocations', async () => {

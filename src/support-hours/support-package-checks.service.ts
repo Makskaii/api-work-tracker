@@ -49,7 +49,11 @@ export class SupportPackageChecksService {
         issues.push({ code: 'missing_description', severity: 'warning', message: `Отчёт №${report.bitrixReportId}: не описана выполненная работа`, entityTypeId: EntityTypeIds.reports, itemId: report.bitrixReportId })
       }
     }
-    const ids = [...new Set([...reports.values()].map((report) => report.bitrixTaskId).filter((id): id is string => !!id))]
+    const reportedTaskIds = new Set([...reports.values()].map((report) => report.bitrixTaskId).filter((id): id is string => !!id))
+    const assignedTaskIds = new Set(snapshot.taskContexts
+      .filter((task) => task.assignedToPackage && !reportedTaskIds.has(task.id))
+      .map((task) => task.id))
+    const ids = [...reportedTaskIds, ...assignedTaskIds]
     for (let offset = 0; offset < ids.length; offset += 50) {
       const batch = ids.slice(offset, offset + 50)
       const tasks = await this.bitrix.listAllItems<{ id: number | string; [TaskCodes.parentproject]?: number | string | null }>({
@@ -69,6 +73,17 @@ export class SupportPackageChecksService {
           }
         } else if (String(task[TaskCodes.parentproject]) !== String(snapshot.project.bitrixProjectId)) {
           issues.push({ code: 'project_mismatch', severity: 'error', message: `Отчёт №${report.bitrixReportId} связан с задачей другого проекта. Исправьте привязку перед выгрузкой`, entityTypeId: EntityTypeIds.reports, itemId: report.bitrixReportId })
+        }
+      }
+      for (const id of batch) {
+        // Report-linked tasks already have an issue pointing to each report's
+        // correction action. An assigned task with no reports needs its own action.
+        if (!assignedTaskIds.has(id)) continue
+        const task = byId.get(id)
+        if (!task) {
+          issues.push({ code: 'task_unavailable', severity: 'warning', message: `Задача №${id} недоступна в Битриксе. Проверьте её привязку к пакету`, entityTypeId: EntityTypeIds.tasks, itemId: id })
+        } else if (String(task[TaskCodes.parentproject]) !== String(snapshot.project.bitrixProjectId)) {
+          issues.push({ code: 'project_mismatch', severity: 'error', message: `Задача №${id} относится к другому проекту. Проверьте проект и привязку к пакету перед выгрузкой`, entityTypeId: EntityTypeIds.tasks, itemId: id })
         }
       }
     }

@@ -168,7 +168,7 @@ export class SupportHoursPackagesService {
         // Older reports can redistribute allocations and expose another task in this package.
         snapshot = await this.readPackageReportSnapshot(packageId, asOfDate)
       }
-      const { item, taskIds, reports } = snapshot
+      const { item, taskIds, assignedTaskIds, reports } = snapshot
       // The transaction is closed before reading current task status and the client's agreed hours.
       const tasks = await this.readPackageTaskMetadata(taskIds)
       const taskContexts: SupportPackageTaskContext[] = taskIds.map((id) => {
@@ -184,6 +184,7 @@ export class SupportHoursPackagesService {
           title: task?.title?.trim() || cachedTitle || `Задача №${id}`,
           status: task ? this.packageTaskStatus(task.stageId) : 'unknown',
           soldHours: task ? this.readSoldTaskHours(task[TaskCodes.hours]) : null,
+          assignedToPackage: assignedTaskIds.has(id),
           reports: taskReports,
         }
       })
@@ -198,16 +199,24 @@ export class SupportHoursPackagesService {
         relations: { project: true, consumptions: { report: true } },
       })
       if (!item) throw new NotFoundException('Support hours package not found')
-      const taskIds = [...new Set(item.consumptions
+      const taskAssignments = await manager.getRepository(SupportTaskAssignment).find({
+        where: { projectId: item.projectId, packageId: item.id },
+        order: { id: 'ASC' },
+      })
+      const assignedTaskIds = new Set(taskAssignments.map((assignment) => assignment.bitrixTaskId)
+        .filter((id) => this.positiveId(id) !== null))
+      // Explicitly assigned tasks belong to the package before their first report.
+      // Their estimates describe planned work, never an actual package charge.
+      const taskIds = [...new Set([...item.consumptions
         .filter((consumption) => this.toNumber(consumption.hours) > 0 && this.isReportOnOrBefore(consumption.report, asOfDate))
         .map((consumption) => consumption.report.bitrixTaskId)
-        .filter((id): id is string => this.positiveId(id) !== null))]
+        .filter((id): id is string => this.positiveId(id) !== null), ...assignedTaskIds])]
       const reports = taskIds.length ? await manager.getRepository(SupportHoursReport).find({
         where: { projectId: item.projectId, bitrixTaskId: In(taskIds) },
         relations: { consumptions: { package: true } },
         order: { reportDate: 'ASC', id: 'ASC' },
       }) : []
-      return { item, taskIds, reports }
+      return { item, taskIds, assignedTaskIds, reports }
     })
   }
 

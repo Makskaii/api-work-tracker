@@ -124,4 +124,50 @@ describe('SupportPackageChecksService', () => {
     expect(f.bitrix.listAllItems).toHaveBeenCalledWith(expect.objectContaining({ filter: { '@id': ['1002'] } }))
     expect(result.issues.map((issue) => issue.itemId)).toEqual(['5402', '5403'])
   })
+
+  it('checks an explicitly assigned task with no reports and warns when its hour limit is missing', async () => {
+    const value = snapshot([], [context([], { assignedToPackage: true, soldHours: null })])
+    const f = fixture(value)
+    const result = await f.service.inspect(value)
+    expect(result).toMatchObject({ blocking: false, issues: [{ code: 'missing_task_hours', severity: 'warning', entityTypeId: EntityTypeIds.tasks, itemId: '1002' }] })
+    expect(f.bitrix.listAllItems).toHaveBeenCalledTimes(1)
+    expect(f.bitrix.listAllItems).toHaveBeenCalledWith({
+      entityTypeId: EntityTypeIds.tasks, filter: { '@id': ['1002'] }, select: ['id', TaskCodes.parentproject],
+    })
+  })
+
+  it('blocks an assigned task without reports if its live project membership changed', async () => {
+    const value = snapshot([], [context([], { assignedToPackage: true })])
+    const f = fixture(value)
+    f.bitrix.listAllItems.mockResolvedValue([{ id: 1002, [TaskCodes.parentproject]: '95' }])
+    expect(await f.service.inspect(value)).toMatchObject({
+      blocking: true,
+      issues: [{ code: 'project_mismatch', severity: 'error', entityTypeId: EntityTypeIds.tasks, itemId: '1002' }],
+    })
+  })
+
+  it('warns about an unavailable assigned task without fabricating or deleting report history', async () => {
+    const value = snapshot([], [context([], { assignedToPackage: true })])
+    const before = JSON.stringify(value)
+    const f = fixture(value)
+    f.bitrix.listAllItems.mockResolvedValue([])
+    expect(await f.service.inspect(value)).toMatchObject({
+      blocking: false,
+      issues: [{ code: 'task_unavailable', severity: 'warning', entityTypeId: EntityTypeIds.tasks, itemId: '1002' }],
+    })
+    expect(JSON.stringify(value)).toBe(before)
+  })
+
+  it.each(['unavailable', 'foreign'])('keeps existing report correction actions without duplicate assigned-task issues (%s)', async (state) => {
+    const rows = [report('5402', 2), report('5403', 3)]
+    const value = snapshot(rows, [context(rows, { assignedToPackage: true })])
+    const f = fixture(value)
+    f.bitrix.listAllItems.mockResolvedValue(state === 'unavailable' ? [] : [{ id: 1002, [TaskCodes.parentproject]: '95' }])
+    const result = await f.service.inspect(value)
+    expect(f.bitrix.listAllItems).toHaveBeenCalledWith(expect.objectContaining({ filter: { '@id': ['1002'] } }))
+    expect(result.issues).toEqual(rows.map((row) => expect.objectContaining({
+      code: state === 'unavailable' ? 'task_unavailable' : 'project_mismatch',
+      entityTypeId: EntityTypeIds.reports, itemId: row.bitrixReportId,
+    })))
+  })
 })

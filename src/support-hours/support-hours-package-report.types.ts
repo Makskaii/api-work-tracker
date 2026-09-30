@@ -7,6 +7,7 @@ export type SupportPackageTaskContext = {
   status: 'in_work' | 'completed' | 'cancelled' | 'unknown'
   soldHours: number | null
   reports: SupportHoursReport[]
+  assignedToPackage?: boolean
 }
 
 export type SupportHoursPackageReportSnapshot = SupportHoursPackage & {

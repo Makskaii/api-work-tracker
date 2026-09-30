@@ -43,6 +43,35 @@ describe('support package PDF content', () => {
     expect(missing).toContain('Общий лимит часов по задаче не указан')
   })
 
+  it('shows an assigned task as 0 / 30 before any reports without an empty work table or a package charge', () => {
+    const html = buildSupportPackageReportHtml({
+      ...sample, spentHours: 0, remainingHours: 80, reportsWithoutTask: [],
+      tasks: [{ ...sample.tasks[0], hours: 0, totalHours: 0, reports: [], otherPackageReports: [] }],
+    })
+    expect(html).toContain('Обмен задачами')
+    expect(html).toContain('В работе')
+    expect(html).toContain('0 / 30 ч')
+    expect(html).toContain('Сделано / Всего')
+    expect(html).toContain('Из выбранного пакета: 0 ч')
+    expect(html).toContain('Отчётов по задаче пока нет.')
+    expect(html).not.toContain('<th>Выполненные работы</th>')
+    expect(html).toContain('<span>Всего списано</span><span>0 ч</span>')
+    expect(html).not.toContain('2026-09')
+  })
+
+  it('keeps old-package work visible for an assigned task and describes only the current package as having no reports', () => {
+    const html = buildSupportPackageReportHtml({
+      ...sample, spentHours: 0, remainingHours: 80, reportsWithoutTask: [],
+      tasks: [{ ...sample.tasks[0], hours: 0, totalHours: 19, reports: [] }],
+    })
+    expect(html).toContain('19 / 30 ч')
+    expect(html).toContain('В этом пакете отчётов по задаче пока нет.')
+    expect(html).toContain('Предыдущая работа')
+    expect(html).toContain('Учтено в пакете №6')
+    expect(html.match(/<th>Выполненные работы<\/th>/g)).toHaveLength(1)
+    expect(html).toContain('<span>Всего списано</span><span>0 ч</span>')
+  })
+
   it('renders Bitrix content as text and cannot insert external assets or executable HTML', () => {
     const html = buildSupportPackageReportHtml({
       ...sample,

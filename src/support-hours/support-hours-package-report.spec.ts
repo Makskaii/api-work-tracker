@@ -6,6 +6,7 @@ import { SupportHoursPackagesController } from './support-hours-packages.control
 import { SupportHoursPackagesService } from './support-hours-packages.service'
 import type { SupportHoursReport } from './entities/support-hours-report.entity'
 import { SupportHoursTransfer } from './entities/support-hours-transfer.entity'
+import { SupportTaskAssignment } from './entities/support-task-assignment.entity'
 import type { SupportHoursPackageReportSnapshot, SupportPackageTaskContext } from './support-hours-package-report.types'
 
 const now = new Date('2026-09-29T08:00:00Z')
@@ -108,6 +109,52 @@ describe('Task progress across support packages', () => {
     expect(data.tasks[0].reports).toEqual([expect.objectContaining({ id: '1', hours: 6 })])
   })
 
+  it.each([30, 0, null])('includes an explicitly assigned task without reports and preserves its %s-hour estimate without charging the package', (soldHours) => {
+    const snapshot: SupportHoursPackageReportSnapshot = {
+      ...packageFixture([]),
+      taskContexts: [{ id: '1002', title: 'Новая задача пакета', status: 'in_work', soldHours, reports: [], assignedToPackage: true }],
+    }
+    const data = buildSupportPackageReportData(snapshot, now)
+    expect(data).toMatchObject({ spentHours: 0, remainingHours: 40, reportsWithoutTask: [] })
+    expect(data.tasks).toEqual([{
+      id: '1002', title: 'Новая задача пакета', status: 'in_work', soldHours,
+      totalHours: 0, hours: 0, reports: [], otherPackageReports: [], unallocatedReports: [],
+    }])
+  })
+
+  it('includes history from other packages for an assigned task without making new package charges', () => {
+    const snapshot = fixture()
+    snapshot.consumptions = []
+    snapshot.taskContexts[0].assignedToPackage = true
+    snapshot.taskContexts[0].reports[0].consumptions = [{ packageId: 9, hours: 20 }] as SupportHoursConsumption[]
+    snapshot.taskContexts[0].reports[1].consumptions = []
+    const data = buildSupportPackageReportData(snapshot, now)
+    expect(data).toMatchObject({ spentHours: 0, remainingHours: 40 })
+    expect(data.tasks[0]).toMatchObject({
+      totalHours: 26, soldHours: 30, hours: 0, reports: [],
+      otherPackageReports: [{ id: '1', packageId: 9, hours: 20 }],
+      unallocatedReports: [{ id: '2', hours: 6 }],
+    })
+  })
+
+  it('does not duplicate an assigned task already represented by package charges', () => {
+    const snapshot = fixture()
+    snapshot.taskContexts[0].assignedToPackage = true
+    const data = buildSupportPackageReportData(snapshot, now)
+    expect(data.tasks).toHaveLength(1)
+    expect(data.tasks[0]).toMatchObject({ totalHours: 26, hours: 6 })
+    expect(data.spentHours).toBe(6)
+  })
+
+  it.each([false, undefined])('keeps a task with neither selected charges nor explicit assignment out of the package (assigned=%s)', (assignedToPackage) => {
+    const snapshot = fixture()
+    snapshot.consumptions = []
+    snapshot.taskContexts[0].assignedToPackage = assignedToPackage
+    const data = buildSupportPackageReportData(snapshot, now)
+    expect(data.tasks).toEqual([])
+    expect(data).toMatchObject({ spentHours: 0, remainingHours: 40 })
+  })
+
   it('uses current completed status even when completion work was charged to another package', () => {
     const snapshot = fixture('completed')
     snapshot.taskContexts[0].reports[1].consumptions[0].packageId = 11
@@ -187,7 +234,10 @@ describe('Fresh serialized package snapshot', () => {
         if (entity === SupportHoursTransfer) return { findOne: jest.fn().mockResolvedValue(null) }
         throw new Error('Unexpected repository')
       },
-      transaction: jest.fn((operation) => { calls.push('transaction'); return operation({ getRepository: () => snapshotRepository }) }),
+      transaction: jest.fn((operation) => {
+        calls.push('transaction')
+        return operation({ getRepository: (entity: unknown) => entity === SupportTaskAssignment ? { find: jest.fn().mockResolvedValue([]) } : snapshotRepository })
+      }),
     }
     const service = new SupportHoursPackagesService({} as never, packagesRepository as never, {} as never, {} as never, dataSource as never, {} as never)
     const sync = jest.spyOn(service, 'sync').mockImplementation(() => {

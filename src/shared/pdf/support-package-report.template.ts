@@ -87,7 +87,7 @@ export const buildSupportPackageReportHtml = (data: SupportPackageReportData, wa
         <strong>${escapeHtml(number(task.totalHours))} / ${task.soldHours === null ? '—' : escapeHtml(number(task.soldHours))} ч<small>Сделано / Всего</small></strong>
       </div>
       <p class="task-summary">Из выбранного пакета: ${escapeHtml(hours(task.hours))}${task.soldHours === null ? ' · Общий лимит часов по задаче не указан' : ''}</p>
-      ${reportTable(task.reports)}
+      ${task.reports.length ? reportTable(task.reports) : `<p class="task-empty">${task.otherPackageReports.length || task.unallocatedReports?.length ? 'В этом пакете отчётов по задаче пока нет.' : 'Отчётов по задаче пока нет.'}</p>`}
       ${task.otherPackageReports.length ? otherPackageTable(task.otherPackageReports) : ''}
       ${task.unallocatedReports?.length ? unallocatedTable(task.unallocatedReports) : ''}
     </section>`).join('')
@@ -127,6 +127,7 @@ export const buildSupportPackageReportHtml = (data: SupportPackageReportData, wa
     .task-status.unknown { background: #e7e7e7; color: #555; }
     .task-status.cancelled { background: #f3e4e4; color: #8b4141; }
     .task-summary { margin: 0; padding: 7px 10px; border: 1px solid #d5e1e1; border-bottom: 0; color: #555; font-size: 10px; break-after: avoid; page-break-after: avoid; }
+    .task-empty { margin: 0; padding: 10px; border: 1px solid #d5e1e1; color: #626970; font-size: 10px; }
     .other-package-label { margin: 10px 0 0; padding: 7px 10px; border: 1px solid #ddd; border-bottom: 0; background: #f3f3f3; color: #555; font-size: 10px; break-after: avoid; page-break-after: avoid; }
     .other-package-table { color: #555; }
     .allocation-note { display: block; margin-top: 5px; color: #626970; font-size: 10px; }

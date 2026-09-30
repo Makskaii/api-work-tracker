@@ -71,6 +71,31 @@ type BitrixTask = {
 
 type SupportHoursWebhookPayload = Record<string, unknown>
 
+type ReportMetadataContext = {
+  projects: Map<string, Promise<ReportProject | null>>
+  taskTitles: Map<string, Promise<string | null>>
+  responsibleNames: Map<string, Promise<string | null>>
+  companyNames: Map<string, Promise<string | null>>
+  activityTitles: Map<string, Promise<string | null>>
+}
+
+function createReportMetadataContext(): ReportMetadataContext {
+  return {
+    projects: new Map(), taskTitles: new Map(), responsibleNames: new Map(),
+    companyNames: new Map(), activityTitles: new Map(),
+  }
+}
+
+// Shared only by one reconciliation/import, never across requests. Report hours,
+// eligibility and project links are still re-read on every synchronization.
+function readReportMetadata<T>(cache: Map<string, Promise<T>> | undefined, key: string, load: () => Promise<T>): Promise<T> {
+  const existing = cache?.get(key)
+  if (existing) return existing
+  const request = load()
+  cache?.set(key, request)
+  return request
+}
+
 @Injectable()
 export class SupportHoursPackagesService {
   private readonly logger = new Logger(SupportHoursPackagesService.name)
@@ -209,7 +234,8 @@ export class SupportHoursPackagesService {
       }
     }
     // Fetch and validate every page before importing any historical report.
-    for (const [id, report] of discovered) await this.applyReport(id, report)
+    const metadata = createReportMetadataContext()
+    for (const [id, report] of discovered) await this.applyReport(id, report, metadata)
   }
 
   private isReportOnOrBefore(report: SupportHoursReport, asOfDate: string): boolean {
@@ -557,6 +583,7 @@ export class SupportHoursPackagesService {
   }
 
   private async performReportsSync() {
+    const metadata = createReportMetadataContext()
     const since = new Date(Date.now() - WINDOW_MS)
     const cached = await this.reportsRepository.find()
     const reports = await this.bitrixService.listAllItems<BitrixSupportReport>({
@@ -568,7 +595,7 @@ export class SupportHoursPackagesService {
     for (const report of reports) {
       if (this.positiveId(report.id) === null) throw new BadGatewayException('Bitrix returned an invalid report ID')
       // Known reports are read again without eligibility filters below.
-      if (!cachedIds.has(String(report.id))) await this.applyReport(String(report.id), report)
+      if (!cachedIds.has(String(report.id))) await this.applyReport(String(report.id), report, metadata)
     }
 
     for (let offset = 0; offset < cached.length; offset += REPORT_RECHECK_BATCH_SIZE) {
@@ -593,7 +620,7 @@ export class SupportHoursPackagesService {
       }
       // Only a complete successful, unfiltered response can establish absence.
       for (const report of batch) {
-        await this.applyReport(report.bitrixReportId, byId.get(report.bitrixReportId) ?? null)
+        await this.applyReport(report.bitrixReportId, byId.get(report.bitrixReportId) ?? null, metadata)
       }
     }
     this.supportProjectTasksCache.clear()
@@ -606,11 +633,11 @@ export class SupportHoursPackagesService {
     return result
   }
 
-  private async applyReport(bitrixReportId: string, report: BitrixSupportReport | null): Promise<boolean> {
+  private async applyReport(bitrixReportId: string, report: BitrixSupportReport | null, metadata?: ReportMetadataContext): Promise<boolean> {
     if (report && (!Object.hasOwn(report, SUPPORT_FLAG) || !Object.hasOwn(report, DailyReportCodes.timeSpent) || !Object.hasOwn(report, DailyReportCodes.parentproject))) {
       throw new BadGatewayException('Bitrix returned an invalid report')
     }
-    const prepared = report ? await this.prepareEligibleReport(report) : null
+    const prepared = report ? await this.prepareEligibleReport(report, metadata) : null
     await this.dataSource.transaction(async (manager) => {
       const repository = manager.getRepository(SupportHoursReport)
       const existing = await repository.findOne({ where: { bitrixReportId } })
@@ -631,16 +658,18 @@ export class SupportHoursPackagesService {
     return prepared !== null
   }
 
-  private async prepareEligibleReport(report: BitrixSupportReport): Promise<SupportHoursReport | null> {
+  private async prepareEligibleReport(report: BitrixSupportReport, metadata?: ReportMetadataContext): Promise<SupportHoursReport | null> {
     const bitrixProjectId = String(report[DailyReportCodes.parentproject] ?? '')
     const hours = this.toNumber(report[DailyReportCodes.timeSpent])
     if (!this.isChecked(report[SUPPORT_FLAG]) || !bitrixProjectId || hours <= 0) return null
-    const bitrixProject = await this.bitrixService.getItem<BitrixProject>({ entityTypeId: EntityTypeIds.projects, id: Number(bitrixProjectId) })
-    if (!bitrixProject || String(bitrixProject.id) !== bitrixProjectId || !Object.hasOwn(bitrixProject, PROJECT_TYPE)) {
-      throw new BadGatewayException('Bitrix returned an invalid project')
-    }
-    if (!this.isSupportProject(bitrixProject[PROJECT_TYPE])) return null
-    const project = await this.upsertSupportProject(bitrixProject)
+    const project = await readReportMetadata(metadata?.projects, bitrixProjectId, async () => {
+      const bitrixProject = await this.bitrixService.getItem<BitrixProject>({ entityTypeId: EntityTypeIds.projects, id: Number(bitrixProjectId) })
+      if (!bitrixProject || String(bitrixProject.id) !== bitrixProjectId || !Object.hasOwn(bitrixProject, PROJECT_TYPE)) {
+        throw new BadGatewayException('Bitrix returned an invalid project')
+      }
+      if (!this.isSupportProject(bitrixProject[PROJECT_TYPE])) return null
+      return await this.upsertSupportProject(bitrixProject)
+    })
     if (!project) return null
     const reportDate = this.toDate(report.begindate ?? report.createdTime)
     const lastActivityAt = this.toDate(report.lastActivityTime ?? report.createdTime)
@@ -656,30 +685,34 @@ export class SupportHoursPackagesService {
     entity.reportDescription = report[DailyReportCodes.title]?.trim() || null
     const bitrixTaskId = String(report[DailyReportCodes.parentId] ?? '').trim()
     const validTaskId = this.positiveId(bitrixTaskId)
-    const task = validTaskId !== null
-      ? (await this.bitrixService.listAllItems<BitrixTask>({ entityTypeId: EntityTypeIds.tasks, filter: { '@id': [validTaskId] }, select: ['id', 'title'] })).at(0)
+    const taskTitle = validTaskId !== null
+      ? await readReportMetadata(metadata?.taskTitles, String(validTaskId), async () =>
+        (await this.bitrixService.listAllItems<BitrixTask>({ entityTypeId: EntityTypeIds.tasks, filter: { '@id': [validTaskId] }, select: ['id', 'title'] })).at(0)?.title?.trim() || null)
       : null
     entity.bitrixTaskId = validTaskId === null ? null : bitrixTaskId
-    entity.taskTitle = task?.title?.trim() || null
+    entity.taskTitle = taskTitle
     const bitrixResponsibleId = String(report.assignedById ?? '').trim()
     const responsibleId = Number(bitrixResponsibleId)
-    const responsible = this.positiveId(responsibleId) !== null
-      ? (await this.bitrixService.getUsersByIds([responsibleId])).at(0)
+    const responsibleName = this.positiveId(responsibleId) !== null
+      ? await readReportMetadata(metadata?.responsibleNames, String(responsibleId), async () =>
+        (await this.bitrixService.getUsersByIds([responsibleId])).at(0)?.title?.trim() || null)
       : null
     entity.bitrixResponsibleId = bitrixResponsibleId || null
-    entity.responsibleName = responsible?.title?.trim() || null
+    entity.responsibleName = responsibleName
     const bitrixCompanyId = String(report[DailyReportCodes.company] ?? '').trim()
     const bitrixActivityId = String(report[DailyReportCodes.activityType] ?? '').trim()
-    const [company, activityTitle] = await Promise.all([
+    const [companyName, activityTitle] = await Promise.all([
       this.positiveId(bitrixCompanyId) !== null
-        ? this.bitrixService.getCompany<{ TITLE?: string }>(Number(bitrixCompanyId))
+        ? readReportMetadata(metadata?.companyNames, String(Number(bitrixCompanyId)), async () =>
+          (await this.bitrixService.getCompany<{ TITLE?: string }>(Number(bitrixCompanyId)))?.TITLE?.trim() || null)
         : Promise.resolve(null),
       this.positiveId(bitrixActivityId) !== null
-        ? this.bitrixService.getListElementTitle(REPORT_ACTIVITY_IBLOCK_ID, Number(bitrixActivityId))
+        ? readReportMetadata(metadata?.activityTitles, String(Number(bitrixActivityId)), () =>
+          this.bitrixService.getListElementTitle(REPORT_ACTIVITY_IBLOCK_ID, Number(bitrixActivityId)))
         : Promise.resolve(null),
     ])
     entity.bitrixCompanyId = bitrixCompanyId || null
-    entity.companyName = company?.TITLE?.trim() || null
+    entity.companyName = companyName
     entity.projectTitle = project.title?.trim() || null
     entity.bitrixActivityId = bitrixActivityId || null
     entity.activityTitle = activityTitle

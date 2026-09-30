@@ -354,10 +354,11 @@ export class ProjectGanttService {
     const nextEventKind = dto.eventKind ?? event.eventKind
     this.validateEventDates({
       eventKind: nextEventKind,
-      planStartDate: dto.planStartDate ?? event.planStartDate,
-      planEndDate: dto.planEndDate ?? event.planEndDate,
-      factStartDate: dto.factStartDate ?? event.factStartDate,
-      factEndDate: dto.factEndDate ?? event.factEndDate,
+      // Null explicitly clears a date; only an omitted field keeps its value.
+      planStartDate: dto.planStartDate !== undefined ? dto.planStartDate : event.planStartDate,
+      planEndDate: dto.planEndDate !== undefined ? dto.planEndDate : event.planEndDate,
+      factStartDate: dto.factStartDate !== undefined ? dto.factStartDate : event.factStartDate,
+      factEndDate: dto.factEndDate !== undefined ? dto.factEndDate : event.factEndDate,
     })
 
     if (dto.title !== undefined) {

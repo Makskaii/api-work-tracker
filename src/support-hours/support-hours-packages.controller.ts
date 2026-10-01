@@ -3,6 +3,7 @@ import { PreviewSupportHoursPackageDto } from './dto/preview-support-hours-packa
 import { SupportHoursPackageImpactService } from './support-hours-package-impact.service'
 import { CreateSupportReportVersionDto } from './dto/create-support-report-version.dto'
 import { PrepareSupportReportDto } from './dto/prepare-support-report.dto'
+import { DownloadSupportPackageReportDto, validateSupportPackageReportScope } from './dto/download-support-package-report.dto'
 import { SupportHoursReportVersionsService } from './support-hours-report-versions.service'
 import { SupportReportEditorService } from './support-report-editor.service'
 import { SupportPackageChecksService } from './support-package-checks.service'
@@ -146,8 +147,9 @@ export class SupportHoursPackagesController {
   @Post(':id/report')
   @HttpCode(200)
   @Header('Cache-Control', 'no-store')
-  async downloadPackageReport(@Param('id', ParseIntPipe) id: number) {
-    const report = await this.reportService.generate(id)
+  async downloadPackageReport(@Param('id', ParseIntPipe) id: number, @Body() dto?: DownloadSupportPackageReportDto) {
+    const scope = validateSupportPackageReportScope(dto)
+    const report = await (scope ? this.reportService.generate(id, scope) : this.reportService.generate(id))
     return new StreamableFile(report.buffer, {
       type: 'application/pdf',
       disposition: `attachment; filename="${report.filename}"`,

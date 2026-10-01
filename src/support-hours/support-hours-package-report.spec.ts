@@ -1,7 +1,7 @@
 import { BadGatewayException, BadRequestException, NotFoundException } from '@nestjs/common'
 import type { SupportHoursConsumption } from './entities/support-hours-consumption.entity'
 import type { SupportHoursPackage } from './entities/support-hours-package.entity'
-import { buildSupportPackageReportData, SupportHoursPackageReportService } from './support-hours-package-report.service'
+import { buildSupportPackageReportData, distributeSupportClientReportHours, SupportHoursPackageReportService } from './support-hours-package-report.service'
 import { SupportHoursPackagesController } from './support-hours-packages.controller'
 import { SupportHoursPackagesService } from './support-hours-packages.service'
 import type { SupportHoursReport } from './entities/support-hours-report.entity'
@@ -118,7 +118,7 @@ describe('Task progress across support packages', () => {
     expect(data).toMatchObject({ spentHours: 0, remainingHours: 40, reportsWithoutTask: [] })
     expect(data.tasks).toEqual([{
       id: '1002', title: 'Новая задача пакета', status: 'in_work', soldHours,
-      totalHours: 0, hours: 0, reports: [], otherPackageReports: [], unallocatedReports: [],
+      totalHours: 0, hours: 0, reports: [], clientReports: [], otherPackageReports: [], unallocatedReports: [],
     }])
   })
 
@@ -280,7 +280,7 @@ describe('Package PDF response', () => {
   beforeEach(() => { jest.useFakeTimers().setSystemTime(now) })
   afterEach(() => { jest.useRealTimers() })
   it('renders fresh package data and returns a binary attachment', async () => {
-    const packages = { getReportSnapshot: jest.fn().mockResolvedValue(packageFixture([consumption(1, 7)])) }
+    const packages = { getReportSnapshot: jest.fn().mockResolvedValue(packageFixture([consumption(1, 7, { bitrixTaskId: null })])) }
     const pdf = { generatePdf: jest.fn().mockResolvedValue(Buffer.from('%PDF-test')) }
     const reportService = new SupportHoursPackageReportService(packages as never, pdf as never, { inspect: jest.fn().mockResolvedValue({ blocking: false }) } as never)
     const controller = new SupportHoursPackagesController({} as never, reportService, {} as never, {} as never, {} as never, {} as never)
@@ -291,5 +291,155 @@ describe('Package PDF response', () => {
     expect(html).toContain('Работа 1')
     expect(response.getHeaders()).toMatchObject({ type: 'application/pdf', disposition: expect.stringMatching(/^attachment; filename="support-package-10-\d{4}-\d{2}-\d{2}\.pdf"$/) })
     expect(response.getHeaders().length).toBe(Buffer.byteLength('%PDF-test'))
+  })
+
+  it('passes validated period bounds through to the PDF and gives the file a distinct name', async () => {
+    const packages = { getReportSnapshot: jest.fn().mockResolvedValue(packageFixture([
+      consumption(1, 2, { bitrixTaskId: null }),
+      consumption(2, 3, { bitrixTaskId: null, reportDate: new Date('2026-09-20T10:00:00Z') }),
+    ])) }
+    const pdf = { generatePdf: jest.fn().mockResolvedValue(Buffer.from('%PDF-test')) }
+    const reportService = new SupportHoursPackageReportService(packages as never, pdf as never, { inspect: jest.fn().mockResolvedValue({ blocking: false }) } as never)
+    const controller = new SupportHoursPackagesController({} as never, reportService, {} as never, {} as never, {} as never, {} as never)
+    const response = await controller.downloadPackageReport(10, { dateFrom: '2026-09-20', dateTo: '2026-09-20' })
+    const [html] = pdf.generatePdf.mock.calls[0]
+    expect(html).toContain('20.09.2026')
+    expect(html).toContain('Работа 2')
+    expect(html).not.toContain('Работа 1')
+    expect(response.getHeaders().disposition).toBe('attachment; filename="support-package-10-2026-09-20-2026-09-20.pdf"')
+  })
+
+  it('validates a direct service date request before refreshing Bitrix', async () => {
+    const packages = { getReportSnapshot: jest.fn() }
+    const reportService = new SupportHoursPackageReportService(packages as never, {} as never, {} as never)
+    await expect(reportService.generate(10, { dateFrom: '2026-09-30', dateTo: '2026-09-30' })).rejects.toThrow(BadRequestException)
+    expect(packages.getReportSnapshot).not.toHaveBeenCalled()
+  })
+})
+
+describe('Client task volume distribution', () => {
+  const row = (id: string, hours: number) => ({ id, hours, date: '2026-09-01', description: `Работа ${id}` })
+
+  it('distributes 20 client hours as 4 and 16 for actual work of 2 and 8 hours', () => {
+    const source = [row('1', 2), row('2', 8)]
+    expect(distributeSupportClientReportHours(source, 20)).toEqual([row('1', 4), row('2', 16)])
+    expect(source).toEqual([row('1', 2), row('2', 8)])
+  })
+
+  it('distributes centihour remainder deterministically, preserving the exact agreed total', () => {
+    const distributed = distributeSupportClientReportHours([row('3', 1), row('2', 1), row('1', 1)], 1)
+    expect(distributed.map((item) => item.hours)).toEqual([0.33, 0.33, 0.34])
+    expect(distributed.reduce((sum, item) => sum + Math.round(item.hours * 100), 0)).toBe(100)
+  })
+
+  it('awards remainders by actual proportional share rather than giving the last row all rounding error', () => {
+    const distributed = distributeSupportClientReportHours([row('1', 8), row('2', 1), row('3', 1)], 0.02)
+    expect(distributed.map((item) => item.hours)).toEqual([0.02, 0, 0])
+  })
+
+  it('retains exact integer arithmetic when multiplying large centihour values', () => {
+    const distributed = distributeSupportClientReportHours([row('1', 999999.99), row('2', 999999.98)], 999999.99)
+    expect(distributed.map((item) => item.hours)).toEqual([500000, 499999.99])
+    expect(distributed.reduce((sum, item) => sum + Math.round(item.hours * 100), 0)).toBe(99999999)
+  })
+
+  it('keeps a real zero distinct from a missing agreed budget', () => {
+    expect(distributeSupportClientReportHours([row('1', 2), row('2', 8)], 0).map((item) => item.hours)).toEqual([0, 0])
+    expect(distributeSupportClientReportHours([row('1', 2), row('2', 8)], null)).toEqual([row('1', 2), row('2', 8)])
+  })
+
+  it('cannot invent work descriptions or weights for a task without reports', () => {
+    expect(distributeSupportClientReportHours([], 20)).toEqual([])
+    expect(distributeSupportClientReportHours([row('1', 0)], 20)).toEqual([row('1', 0)])
+  })
+})
+
+describe('Client package and period report scope', () => {
+  function fixture(): SupportHoursPackageReportSnapshot {
+    const selected = consumption(2, 2, { hours: 2, reportDate: new Date('2026-09-04T21:00:00Z') })
+    const old = consumption(6, 6, { hours: 6, bitrixTaskId: '999', taskTitle: 'Старая задача' })
+    const other = consumption(7, 8, { hours: 8, reportDate: new Date('2026-09-20T10:00:00Z') })
+    return {
+      ...packageFixture([
+        consumption(1, 1, { bitrixTaskId: null, reportDate: new Date('2026-09-04T20:59:59Z') }),
+        selected,
+        consumption(3, 3, { bitrixTaskId: null, reportDate: new Date('2026-09-10T20:59:59Z') }),
+        consumption(4, 4, { bitrixTaskId: null, reportDate: new Date('2026-09-10T21:00:00Z') }),
+        { ...consumption(5, 5, { bitrixTaskId: '777', reportDate: new Date('2026-09-09T10:00:00Z') }), packageId: 11 },
+        old,
+      ]),
+      taskContexts: [
+        { id: '1002', title: 'Выбранная задача целиком', status: 'completed', soldHours: 20, reports: [
+          { ...selected.report, consumptions: [{ packageId: 10, hours: 2 }] } as SupportHoursReport,
+          { ...other.report, consumptions: [{ packageId: 11, hours: 8 }] } as SupportHoursReport,
+        ] },
+        { id: '999', title: 'Старая задача', status: 'completed', soldHours: 6, reports: [old.report] },
+        { id: '5000', title: 'Назначенная задача без отчётов', status: 'in_work', soldHours: 30, reports: [], assignedToPackage: true },
+      ],
+    }
+  }
+
+  it('selects tasks by inclusive Moscow work days and retains their whole agreed volume and reports', () => {
+    const snapshot = fixture()
+    const before = structuredClone(snapshot)
+    const data = buildSupportPackageReportData(snapshot, now, { dateFrom: '2026-09-05', dateTo: '2026-09-10' })
+    expect(data).toMatchObject({ dateFrom: '2026-09-05', dateTo: '2026-09-10', spentHours: 12, remainingHours: 28, periodSpentHours: 5 })
+    expect(data.tasks).toHaveLength(1)
+    expect(data.tasks[0]).toMatchObject({ id: '1002', soldHours: 20, totalHours: 10, hours: 2 })
+    expect(data.tasks[0].clientReports).toEqual([
+      expect.objectContaining({ id: '2', description: 'Работа 2', hours: 4 }),
+      expect.objectContaining({ id: '7', description: 'Работа 7', hours: 16 }),
+    ])
+    expect(data.reportsWithoutTask).toEqual([expect.objectContaining({ id: '3', hours: 3 })])
+    expect(snapshot).toEqual(before)
+  })
+
+  it('preserves assigned zero-report tasks for the full package but omits them from date-based periods', () => {
+    expect(buildSupportPackageReportData(fixture(), now).tasks.map((task) => task.id)).toEqual(['999', '1002', '5000'])
+    const period = buildSupportPackageReportData(fixture(), now, { dateFrom: '2026-09-05', dateTo: '2026-09-10' })
+    expect(period.tasks.map((task) => task.id)).toEqual(['1002'])
+  })
+
+  it('keeps actual cumulative balances even when a chosen period has no work', () => {
+    const data = buildSupportPackageReportData(fixture(), now, { dateFrom: '2026-09-15', dateTo: '2026-09-15' })
+    expect(data).toMatchObject({ spentHours: 16, remainingHours: 24, periodSpentHours: 0, tasks: [], reportsWithoutTask: [] })
+  })
+
+  it('rejects periods ending before purchase but includes the purchase day itself', () => {
+    expect(() => buildSupportPackageReportData(fixture(), now, { dateFrom: '2026-08-01', dateTo: '2026-08-31' })).toThrow('Период отчёта заканчивается до даты покупки пакета')
+    expect(buildSupportPackageReportData(fixture(), now, { dateFrom: '2026-08-01', dateTo: '2026-09-01' })).toMatchObject({ spentHours: 6, remainingHours: 34, periodSpentHours: 6 })
+  })
+
+  it('keeps unfinished task descriptions out of client rows without altering factual rows or budgets', () => {
+    const snapshot = fixture()
+    snapshot.taskContexts[0].status = 'in_work'
+    const data = buildSupportPackageReportData(snapshot, now)
+    const task = data.tasks.find((item) => item.id === '1002')!
+    expect(task).toMatchObject({ soldHours: 20, totalHours: 10, hours: 2, clientReports: [] })
+    expect(task.reports[0]).toMatchObject({ description: 'Работа 2', hours: 2 })
+    expect(data.spentHours).toBe(16)
+  })
+
+  it('includes old-package and unallocated full reports once without allocation annotations', () => {
+    const snapshot = fixture()
+    const report = snapshot.taskContexts[0].reports[1]
+    report.consumptions = [{ packageId: 11, hours: 3 }] as SupportHoursConsumption[]
+    snapshot.taskContexts[0].reports.push(report)
+    const task = buildSupportPackageReportData(snapshot, now).tasks.find((item) => item.id === '1002')!
+    expect(task.totalHours).toBe(10)
+    expect(task.clientReports).toEqual([
+      { id: '2', date: '2026-09-05', description: 'Работа 2', hours: 4 },
+      { id: '7', date: '2026-09-20', description: 'Работа 7', hours: 16 },
+    ])
+    expect(task.unallocatedReports).toEqual([expect.objectContaining({ id: '7', hours: 5 })])
+  })
+
+  it('excludes future full-task reports from client weights and keeps a missing budget honest', () => {
+    const snapshot = fixture()
+    snapshot.taskContexts[0].soldHours = null
+    snapshot.taskContexts[0].reports.push({ ...snapshot.taskContexts[0].reports[1], bitrixReportId: '8', reportDate: new Date('2026-09-29T21:00:00Z') })
+    const task = buildSupportPackageReportData(snapshot, now).tasks.find((item) => item.id === '1002')!
+    expect(task).toMatchObject({ soldHours: null, totalHours: 10 })
+    expect(task.clientReports?.map((row) => row.hours)).toEqual([2, 8])
   })
 })

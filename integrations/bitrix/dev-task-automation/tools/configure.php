@@ -74,6 +74,8 @@ if ($mode === 'restore') {
         if ($value === '') { Option::delete(DeliveryMode::MODULE, ['name' => $name]); }
         else { Option::set(DeliveryMode::MODULE, $name, $value); }
     }
+    \Bitrix\Main\Application::getInstance()->getManagedCache()
+        ->clean('b_option:' . DeliveryMode::MODULE, 'b_option');
     echo "Workflow and agent configuration restored. Restore deployment files from the same backup separately.\n";
     exit;
 }
@@ -144,4 +146,8 @@ try {
     $connection->rollbackTransaction();
     throw $error;
 }
+// Option::set clears managed cache before commit. A concurrent scheduler
+// can refill it with the old committed values; clear again after commit.
+\Bitrix\Main\Application::getInstance()->getManagedCache()
+    ->clean('b_option:' . DeliveryMode::MODULE, 'b_option');
 echo json_encode(['template' => $templateId, 'agents' => $ids, 'installed' => true], JSON_PRETTY_PRINT) . "\n";

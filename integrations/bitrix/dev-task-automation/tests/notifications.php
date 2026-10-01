@@ -19,7 +19,7 @@ function notificationAssert($actual, $expected, string $message): void
 function notificationTask(array $overrides = []): array
 {
     return array_replace([
-        'id' => 1062, 'title' => 'Разработка интеграции', 'stage' => 'DT1072_18:CLIENT',
+        'id' => 1062, 'title' => 'Разработка интеграции', 'stage' => 'DT1072_18:CLIENT', 'category' => 18,
         'assignee' => 50, 'setters' => [3, 40], 'redline' => '2026-10-01',
         'estimate' => '10', 'sold' => 20, 'actual' => 0,
     ], $overrides);
@@ -224,6 +224,95 @@ $cases['pending retries freeze only still-valid reasons and recipients'] = stati
         notificationAssert(Policy::pendingIsCurrent($pending, $candidate === [] ? null : $candidate), false, 'Check/done/correction/date change drops stale pending payload');
     }
     notificationAssert(Policy::pendingIsCurrent(['userId' => 50, 'key' => $original['key'], 'partCount' => 2, 'parts' => ['one']], $original), false, 'Incomplete stored page data cannot count as delivered');
+};
+$cases['current Check visit validates latest stage category owner and Moscow date'] = static function (): void {
+    $task = notificationTask(['stage' => Policy::CHECK_STAGE]);
+    $entry = [
+        'ID' => 900, 'OWNER_TYPE_ID' => 1072, 'OWNER_ID' => 1062, 'TYPE_ID' => 2,
+        'STAGE_ID' => Policy::CHECK_STAGE, 'CATEGORY_ID' => 18,
+        'CREATED_TIME' => new DateTimeImmutable('2026-09-30 21:30:00+00:00'),
+    ];
+    notificationAssert(Policy::currentCheckVisit($task, [$entry]), ['id' => 900, 'date' => '2026-10-01'], 'UTC crossing is the next Moscow calendar day');
+    $native = new class {
+        public function getTimestamp(): int { return (new DateTimeImmutable('2026-09-30 21:30:00+00:00'))->getTimestamp(); }
+    };
+    notificationAssert(Policy::currentCheckVisit($task, [array_replace($entry, ['CREATED_TIME' => $native])]), ['id' => 900, 'date' => '2026-10-01'], 'Native Bitrix DateTime timestamp used');
+    $rework = array_replace($entry, ['ID' => 901, 'STAGE_ID' => 'DT1072_18:CLIENT']);
+    notificationAssert(Policy::currentCheckVisit($task, [$entry, $rework]), null, 'Do not resurrect Check before the latest rework stage');
+    foreach ([3, 5] as $newType) {
+        $later = array_replace($entry, ['ID' => 901, 'TYPE_ID' => $newType]);
+        notificationAssert(Policy::currentCheckVisit($task, [$entry, $later]), null, 'Do not hide a newer finalization/category history row');
+    }
+    foreach ([['CATEGORY_ID' => 17], ['OWNER_TYPE_ID' => 1060], ['OWNER_ID' => 999], ['TYPE_ID' => 3], ['CREATED_TIME' => ''], ['CREATED_TIME' => '  '], ['CREATED_TIME' => '2026-02-30 12:00']] as $change) {
+        notificationAssert(Policy::currentCheckVisit($task, [array_replace($entry, $change)]), null, 'Mismatched or invalid history is unknown');
+    }
+    $again = array_replace($entry, ['ID' => 902, 'CREATED_TIME' => '2026-10-02 11:30:00']);
+    notificationAssert(Policy::currentCheckVisit($task, [$entry, $rework, $again]), ['id' => 902, 'date' => '2026-10-02'], 'Latest Check visit after rework wins');
+};
+$cases['timely and on-redline Check suppress developer even when self-setter'] = static function (): void {
+    foreach (['2026-09-30', '2026-10-01'] as $handoffDate) {
+        $task = notificationTask(['stage' => Policy::CHECK_STAGE, 'setters' => [50, 40], 'checkHandoff' => ['id' => 900, 'date' => $handoffDate]]);
+        $evaluation = Policy::evaluate([$task], 3, [], notificationNow('2026-10-02 10:00'));
+        notificationAssert(array_column($evaluation['digests'], 'userId'), [3, 40], 'Self-setter developer gets no daily review deadline');
+        $analyst = notificationUserDigest($evaluation['digests'], 40);
+        notificationAssert($analyst['tasks'][0]['reasons']['deadline']['kind'], 'review_overdue', 'Analyst sees review responsibility');
+        $message = Notifications::render($analyst, notificationNow('2026-10-02 10:00'));
+        notificationAssert(strpos($message, 'Разработчик передал задачу в срок.') !== false, true, 'Developer timeliness explained');
+        notificationAssert(strpos($message, 'просрочен на') === false, true, 'Review wait is not described as developer delay');
+    }
+};
+$cases['late Check asks developer and head once independent of daily delivery'] = static function (): void {
+    $task = notificationTask(['stage' => Policy::CHECK_STAGE, 'setters' => [50, 40], 'redline' => '2026-09-30', 'checkHandoff' => ['id' => 900, 'date' => '2026-10-01']]);
+    $state = ['deadlineSentOn' => ['3' => '2026-10-02', '40' => '2026-10-02', '50' => '2026-10-02']];
+    $evaluation = Policy::evaluate([$task], 3, $state, notificationNow('2026-10-02 10:00'));
+    notificationAssert(array_column($evaluation['digests'], 'userId'), [3, 50], 'Special handoff does not use the daily recipient ledger');
+    foreach ($evaluation['digests'] as $digest) {
+        notificationAssert(array_keys($digest['tasks'][0]['reasons']), ['late_handoff'], 'No generic daily overdue added to developer');
+    }
+    $developer = Notifications::render(notificationUserDigest($evaluation['digests'], 50), notificationNow('2026-10-02 10:00'));
+    notificationAssert(strpos($developer, '01.10.2026 после редлайна 30.09.2026') !== false, true, 'Actual Check entry and redline shown');
+    notificationAssert(strpos($developer, 'напишите в комментарии') !== false, true, 'Developer asked for explanatory comment');
+    $head = Notifications::render(notificationUserDigest($evaluation['digests'], 3), notificationNow('2026-10-02 10:00'));
+    notificationAssert(strpos($head, 'Попросите разработчика') !== false, true, 'Head receives an appropriate action');
+    $delivered = notificationDeliverAll($evaluation);
+    notificationAssert(Policy::evaluate([$task], 3, $delivered, notificationNow('2026-10-02 10:01'))['digests'], [], 'No same-visit minute repeat');
+    $tomorrow = Policy::evaluate([$task], 3, $delivered, notificationNow('2026-10-05 10:00'));
+    notificationAssert(array_column($tomorrow['digests'], 'userId'), [3, 40], 'Only analyst/head daily waiting reminder repeats');
+    notificationAssert(isset(notificationUserDigest($tomorrow['digests'], 3)['tasks'][0]['reasons']['late_handoff']), false, 'Late handoff comment request does not repeat daily');
+};
+$cases['unknown and future Check history never invents developer lateness'] = static function (): void {
+    foreach ([null, ['id' => 900, 'date' => 'bad'], ['id' => 0, 'date' => '2026-10-01'], ['id' => 900, 'date' => '2026-10-03']] as $handoff) {
+        $task = notificationTask(['stage' => Policy::CHECK_STAGE, 'setters' => [50, 40], 'redline' => '2026-09-30', 'checkHandoff' => $handoff]);
+        $evaluation = Policy::evaluate([$task], 3, [], notificationNow('2026-10-02 10:00'));
+        notificationAssert(array_column($evaluation['digests'], 'userId'), [3, 40], 'No unsupported developer accusation');
+        foreach ($evaluation['digests'] as $digest) {
+            notificationAssert(isset($digest['tasks'][0]['reasons']['late_handoff']), false, 'Special reason needs an actual known past visit');
+        }
+    }
+};
+$cases['new Check cycle and redline correction rearm only the relevant handoff'] = static function (): void {
+    $task = notificationTask(['stage' => Policy::CHECK_STAGE, 'setters' => [50, 40], 'redline' => '2026-09-30', 'checkHandoff' => ['id' => 900, 'date' => '2026-10-01']]);
+    $first = Policy::evaluate([$task], 3, [], notificationNow('2026-10-02 10:00'));
+    $state = notificationDeliverAll($first);
+    $newVisit = array_replace($task, ['checkHandoff' => ['id' => 901, 'date' => '2026-10-02']]);
+    $again = Policy::evaluate([$newVisit], 3, $state, notificationNow('2026-10-02 10:01'));
+    notificationAssert(array_column($again['digests'], 'userId'), [3, 50], 'New Check entry has a new independent comment request');
+    $original = notificationUserDigest($first['digests'], 50);
+    $pending = ['userId' => 50, 'key' => $original['key'], 'partCount' => 1, 'parts' => ['frozen']];
+    notificationAssert(Policy::pendingIsCurrent($pending, notificationUserDigest($again['digests'], 50)), false, 'Old-visit frozen pages cannot survive a new visit');
+    $timely = array_replace($task, ['redline' => '2026-10-02']);
+    $corrected = Policy::evaluate([$timely], 3, $state, notificationNow('2026-10-02 10:01'));
+    notificationAssert(notificationUserDigest($corrected['digests'], 50), [], 'Extended redline removes developer late notice');
+    notificationAssert(Policy::pendingIsCurrent($pending, null), false, 'Corrected redline discards old late payload');
+};
+$cases['late handoff follows weekday window and head-assignee collision deduplicates'] = static function (): void {
+    $task = notificationTask(['stage' => Policy::CHECK_STAGE, 'assignee' => 3, 'setters' => [3], 'redline' => '2026-09-30', 'checkHandoff' => ['id' => 900, 'date' => '2026-10-01']]);
+    foreach (['2026-10-02 09:59', '2026-10-03 11:00'] as $time) {
+        notificationAssert(Policy::evaluate([$task], 3, [], notificationNow($time))['digests'], [], 'No late comment request outside deadline window');
+    }
+    $evaluation = Policy::evaluate([$task], 3, [], notificationNow('2026-10-02 10:00'));
+    notificationAssert(array_column($evaluation['digests'], 'userId'), [3], 'Head/developer overlap gives one digest');
+    notificationAssert(array_keys($evaluation['digests'][0]['tasks'][0]['reasons']), ['deadline', 'late_handoff'], 'Head daily responsibility retained with separate late reason');
 };
 
 foreach ($cases as $name => $test) {

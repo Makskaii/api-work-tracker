@@ -85,7 +85,16 @@ final class NotificationPolicy
     {
         $setters = (array)($task['setters'] ?? []);
         $assignee = (int)($task['assignee'] ?? 0);
+        if ($kind === 'late_handoff') {
+            return self::users([self::handoffDeveloper($task), $headId]);
+        }
         if (($task['stage'] ?? '') === self::CHECK_STAGE) {
+            if ($kind === 'deadline') {
+                $developer = self::handoffDeveloper($task);
+                return array_values(array_filter(self::users([$setters, $headId]), static function (int $id) use ($developer, $headId): bool {
+                    return $id !== $developer || $id === $headId;
+                }));
+            }
             return self::users([$setters, $headId]);
         }
         if ($kind === 'estimate') {
@@ -95,6 +104,77 @@ final class NotificationPolicy
             return self::users([$setters, $headId]);
         }
         return self::users([$assignee, $setters, $headId]);
+    }
+
+    private static function handoffDeveloper(array $task): int
+    {
+        // Native history RESPONSIBLE_ID is rewritten on reassignment, not a historical snapshot.
+        return (int)($task['assignee'] ?? 0);
+    }
+
+    private static function checkHandoff(array $task): ?array
+    {
+        $handoff = $task['checkHandoff'] ?? null;
+        if (!is_array($handoff) || (int)($handoff['id'] ?? 0) <= 0) {
+            return null;
+        }
+        $date = self::date($handoff['date'] ?? null);
+        if ($date === null) {
+            return null;
+        }
+        return ['id' => (int)$handoff['id'], 'date' => $date];
+    }
+
+    /** The current visit is the latest native stage entry, never an older Check cycle. */
+    public static function currentCheckVisit(array $task, array $history): ?array
+    {
+        if (($task['stage'] ?? '') !== self::CHECK_STAGE) {
+            return null;
+        }
+        $latest = null;
+        foreach ($history as $entry) {
+            if ((int)($entry['OWNER_TYPE_ID'] ?? 0) !== 1072
+                || (int)($entry['OWNER_ID'] ?? 0) !== (int)$task['id']) {
+                continue;
+            }
+            if ($latest === null || (int)$entry['ID'] > (int)$latest['ID']) {
+                $latest = $entry;
+            }
+        }
+        if ($latest === null || (int)($latest['ID'] ?? 0) <= 0
+            || !in_array((int)($latest['TYPE_ID'] ?? 0), [1, 2], true)
+            || ($latest['STAGE_ID'] ?? '') !== self::CHECK_STAGE
+            || (int)($latest['CATEGORY_ID'] ?? -1) !== (int)($task['category'] ?? -2)) {
+            return null;
+        }
+        $created = $latest['CREATED_TIME'] ?? null;
+        try {
+            $zone = new DateTimeZone('Europe/Moscow');
+            if ($created instanceof DateTimeInterface) {
+                $date = DateTimeImmutable::createFromInterface($created)->setTimezone($zone);
+            } elseif (is_object($created) && method_exists($created, 'getTimestamp')) {
+                $timestamp = (int)$created->getTimestamp();
+                if ($timestamp <= 0) {
+                    return null;
+                }
+                $date = (new DateTimeImmutable('@' . $timestamp))->setTimezone($zone);
+            } elseif (is_string($created)) {
+                if (trim($created) === '') {
+                    return null;
+                }
+                $date = new DateTimeImmutable($created, $zone);
+                $errors = DateTimeImmutable::getLastErrors();
+                if ($errors && ($errors['warning_count'] || $errors['error_count'])) {
+                    return null;
+                }
+                $date = $date->setTimezone($zone);
+            } else {
+                return null;
+            }
+        } catch (\Throwable $error) {
+            return null;
+        }
+        return ['id' => (int)$latest['ID'], 'date' => $date->format('Y-m-d')];
     }
 
     /**
@@ -111,9 +191,11 @@ final class NotificationPolicy
             'deadlineSentOn' => (array)($state['deadlineSentOn'] ?? []),
             'thresholds' => (array)($state['thresholds'] ?? []),
             'pendingDigests' => (array)($state['pendingDigests'] ?? []),
+            'handoffAlerts' => (array)($state['handoffAlerts'] ?? []),
         ];
         $digests = [];
         $openIds = [];
+        $checkingIds = [];
 
         foreach ($tasks as $task) {
             $id = (int)($task['id'] ?? 0);
@@ -123,6 +205,12 @@ final class NotificationPolicy
             $openIds[(string)$id] = true;
             $redline = self::date($task['redline'] ?? null);
             $task['redline'] = $redline;
+            $isChecking = ($task['stage'] ?? '') === self::CHECK_STAGE;
+            $handoff = $isChecking ? self::checkHandoff($task) : null;
+            $task['checkHandoff'] = $handoff;
+            if ($isChecking) {
+                $checkingIds[(string)$id] = true;
+            }
             if ($deadlineWindow && $redline !== null && $redline <= $day) {
                 $days = (int)(new DateTimeImmutable($redline, $moscow->getTimezone()))->diff($moscow->setTime(0, 0))->format('%a');
                 foreach (self::recipients($task, $headId, 'deadline') as $userId) {
@@ -130,9 +218,42 @@ final class NotificationPolicy
                         continue;
                     }
                     self::append($digests, $userId, $task, 'deadline', [
-                        'kind' => $redline === $day ? 'due' : 'overdue', 'days' => $days,
+                        'kind' => $isChecking
+                            ? ($redline === $day ? 'review_due' : 'review_overdue')
+                            : ($redline === $day ? 'due' : 'overdue'),
+                        'days' => $days,
+                        'handedOffOn' => $handoff['date'] ?? null,
+                        'handoffTiming' => $handoff === null ? 'unknown'
+                            : ($handoff['date'] <= $redline ? 'timely' : 'late'),
                     ]);
                     $digests[$userId]['deadlineDay'] = $day;
+                }
+            }
+
+            // Distinguish a developer's late delivery from the time spent awaiting review.
+            // This edge has its own per-visit/redline ledger, independent of today's digest.
+            if ($isChecking && $handoff !== null && $redline !== null) {
+                $signature = hash('sha256', implode('|', [
+                    'late_handoff', $id, $handoff['id'], $handoff['date'], $redline, self::handoffDeveloper($task),
+                ]));
+                $previous = (array)($state['handoffAlerts'][(string)$id] ?? []);
+                $state['handoffAlerts'][(string)$id] = [
+                    'signature' => $signature,
+                    'sentTo' => ($previous['signature'] ?? null) === $signature
+                        ? (array)($previous['sentTo'] ?? []) : [],
+                ];
+                if ($deadlineWindow && $handoff['date'] > $redline && $handoff['date'] <= $day) {
+                    foreach (self::recipients($task, $headId, 'late_handoff') as $userId) {
+                        if (isset($state['handoffAlerts'][(string)$id]['sentTo'][(string)$userId])) {
+                            continue;
+                        }
+                        self::append($digests, $userId, $task, 'late_handoff', [
+                            'handedOffOn' => $handoff['date'], 'visitId' => $handoff['id'],
+                            'developerId' => self::handoffDeveloper($task),
+                            'action' => $userId === self::handoffDeveloper($task) ? 'write_comment' : 'request_comment',
+                        ]);
+                        $digests[$userId]['handoffMarks'][] = ['taskId' => $id, 'signature' => $signature];
+                    }
                 }
             }
 
@@ -175,6 +296,11 @@ final class NotificationPolicy
                 unset($state['thresholds'][$id]);
             }
         }
+        foreach (array_keys($state['handoffAlerts']) as $id) {
+            if (!isset($checkingIds[(string)$id])) {
+                unset($state['handoffAlerts'][$id]);
+            }
+        }
         foreach ($state['deadlineSentOn'] as $id => $sentDay) {
             if (!is_string($sentDay) || $sentDay < $moscow->modify('-14 days')->format('Y-m-d')) {
                 unset($state['deadlineSentOn'][$id]);
@@ -187,6 +313,12 @@ final class NotificationPolicy
             // Stable on retries even when actual hours increase before a retry.
             $keyParts = [$digest['deadlineDay'] ?? '', (string)$digest['userId']];
             foreach ($digest['tasks'] as $row) {
+                $keyParts[] = $row['id'] . ':stage:' . $row['stage'];
+                $keyParts[] = $row['id'] . ':assignee:' . $row['assignee'];
+                if (($row['checkHandoff']['id'] ?? 0) > 0) {
+                    $keyParts[] = $row['id'] . ':check_visit:' . $row['checkHandoff']['id']
+                        . ':' . $row['checkHandoff']['date'];
+                }
                 foreach ($row['reasons'] as $kind => $reason) {
                     if ($kind === 'deadline') {
                         $keyParts[] = $row['id'] . ':deadline:' . $row['redline'];
@@ -194,6 +326,9 @@ final class NotificationPolicy
                 }
             }
             foreach ($digest['overrunMarks'] as $mark) {
+                $keyParts[] = $mark['signature'];
+            }
+            foreach ($digest['handoffMarks'] as $mark) {
                 $keyParts[] = $mark['signature'];
             }
             sort($keyParts, SORT_STRING);
@@ -206,13 +341,15 @@ final class NotificationPolicy
     private static function append(array &$digests, int $userId, array $task, string $kind, array $reason): void
     {
         if (!isset($digests[$userId])) {
-            $digests[$userId] = ['userId' => $userId, 'tasks' => [], 'deadlineDay' => null, 'overrunMarks' => []];
+            $digests[$userId] = ['userId' => $userId, 'tasks' => [], 'deadlineDay' => null, 'overrunMarks' => [], 'handoffMarks' => []];
         }
         $id = (int)$task['id'];
         if (!isset($digests[$userId]['tasks'][$id])) {
             $digests[$userId]['tasks'][$id] = [
                 'id' => $id, 'title' => (string)($task['title'] ?? ''),
                 'stage' => (string)($task['stage'] ?? ''), 'redline' => $task['redline'] ?? null,
+                'assignee' => (int)($task['assignee'] ?? 0),
+                'checkHandoff' => $task['checkHandoff'] ?? null,
                 'reasons' => [],
             ];
         }
@@ -236,6 +373,12 @@ final class NotificationPolicy
             if (isset($state['thresholds'][$id][$metric])
                 && self::signature((int)$id, $metric, $state['thresholds'][$id][$metric]) === $mark['signature']) {
                 $state['thresholds'][$id][$metric]['sentTo'][$userId] = $digest['key'];
+            }
+        }
+        foreach ((array)($digest['handoffMarks'] ?? []) as $mark) {
+            $id = (string)$mark['taskId'];
+            if (($state['handoffAlerts'][$id]['signature'] ?? null) === $mark['signature']) {
+                $state['handoffAlerts'][$id]['sentTo'][$userId] = $digest['key'];
             }
         }
         return $state;

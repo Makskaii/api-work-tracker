@@ -6,8 +6,10 @@ define('NO_KEEP_STATISTIC', true);
 define('NOT_CHECK_PERMISSIONS', true);
 define('NO_AGENT_CHECK', true);
 define('DisableEventsCheck', true);
-require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
+// Prefer the candidate integration during a staged dry run, before init.php
+// registers the installed version's autoloader.
 require dirname(__DIR__) . '/bootstrap.php';
+require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
 
 use Evolution\DevTaskAutomation\GuardPolicy;
 use Evolution\DevTaskAutomation\Notifications;

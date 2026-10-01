@@ -34,12 +34,18 @@ if [ -d "$target_root" ]; then cp -a "$target_root" "$backup_root/dev_tasks"; fi
 if [ -d "$activity_root" ]; then cp -a "$activity_root" "$backup_root/evolutiondevtaskguard"; fi
 
 install -d -o bitrix -g bitrix -m 755 "$target_root/src" "$activity_root"
-install -o bitrix -g bitrix -m 644 "$source_root/bootstrap.php" "$target_root/bootstrap.php"
+install_php() {
+    local source_file=$1 destination_file=$2
+    local candidate_file="${destination_file}.evolution-new-$$"
+    install -o bitrix -g bitrix -m 644 "$source_file" "$candidate_file"
+    mv -f "$candidate_file" "$destination_file"
+}
+install_php "$source_root/bootstrap.php" "$target_root/bootstrap.php"
 for php_file in "$source_root"/src/*.php; do
-    install -o bitrix -g bitrix -m 644 "$php_file" "$target_root/src/"
+    install_php "$php_file" "$target_root/src/$(basename "$php_file")"
 done
-install -o bitrix -g bitrix -m 644 "$source_root/activities/evolutiondevtaskguard/.description.php" "$activity_root/.description.php"
-install -o bitrix -g bitrix -m 644 "$source_root/activities/evolutiondevtaskguard/evolutiondevtaskguard.php" "$activity_root/evolutiondevtaskguard.php"
+install_php "$source_root/activities/evolutiondevtaskguard/.description.php" "$activity_root/.description.php"
+install_php "$source_root/activities/evolutiondevtaskguard/evolutiondevtaskguard.php" "$activity_root/evolutiondevtaskguard.php"
 
 # Validate native Bitrix workflow metadata before enabling any new action.
 php "$source_root/tools/configure.php" check "$document_root"
@@ -63,4 +69,31 @@ fi
 
 php "$source_root/tools/configure.php" apply "$document_root" "$backup_root"
 php "$source_root/tools/configure.php" check "$document_root"
+
+# Configuration checks can populate cache as root. Clear only this integration's
+# entry, then read it through the same service account used by the scheduler.
+php <<'PHP'
+<?php
+$_SERVER['DOCUMENT_ROOT'] = '/home/bitrix/www';
+define('NO_KEEP_STATISTIC', true);
+define('NO_AGENT_CHECK', true);
+define('NOT_CHECK_PERMISSIONS', true);
+define('DisableEventsCheck', true);
+require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
+\Bitrix\Main\Application::getInstance()->getManagedCache()
+    ->clean('b_option:evolution.dev.tasks', 'b_option');
+PHP
+runuser -u bitrix -- php <<'PHP'
+<?php
+$_SERVER['DOCUMENT_ROOT'] = '/home/bitrix/www';
+define('NO_KEEP_STATISTIC', true);
+define('NO_AGENT_CHECK', true);
+define('NOT_CHECK_PERMISSIONS', true);
+define('DisableEventsCheck', true);
+require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
+if (\Evolution\DevTaskAutomation\DeliveryMode::key() !== 'preview_3') {
+    throw new RuntimeException('Service account does not see preview delivery to user 3.');
+}
+echo "Scheduler delivery verified: preview_3.\n";
+PHP
 printf 'Private backup: %s\n' "$backup_root"

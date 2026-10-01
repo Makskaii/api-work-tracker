@@ -42,6 +42,22 @@ namespace Bitrix\Im\Model {
         }
     }
 }
+namespace Bitrix\Crm\History\Entity {
+    final class EntityStageHistoryTable {
+        public static array $entries = [];
+        public static function getList(array $parameters): object {
+            if (isset($parameters['filter']['@TYPE_ID'])) {
+                throw new \RuntimeException('History query must not hide newer finalization/category entries');
+            }
+            $entries = array_values(array_filter(self::$entries, static function (array $entry) use ($parameters): bool {
+                return $entry['OWNER_TYPE_ID'] === $parameters['filter']['=OWNER_TYPE_ID']
+                    && in_array($entry['OWNER_ID'], $parameters['filter']['@OWNER_ID'], true);
+            }));
+            usort($entries, static function (array $a, array $b): int { return $b['ID'] <=> $a['ID']; });
+            return new \FakeNotificationResult($entries);
+        }
+    }
+}
 namespace {
     use Bitrix\Main\Config\Option;
     use Evolution\DevTaskAutomation\DeliveryMode;
@@ -63,15 +79,20 @@ namespace {
         public function get(string $field) { return $this->data[$field] ?? null; }
     }
     final class FakeNotificationFactory {
+        public static array $taskOverrides = [];
+        public static float $reportHours = 25.0;
         private int $type;
         public function __construct(int $type) { $this->type = $type; }
         public function getItems(array $parameters): array {
             $data = $this->type === 1072 ? [
                 'ID' => 100, 'TITLE' => 'Проверка доставки', 'STAGE_ID' => 'DT1072_18:CLIENT',
-                'ASSIGNED_BY_ID' => 50, 'UF_CRM_14_1773214976' => [40],
+                'ASSIGNED_BY_ID' => 50, 'CATEGORY_ID' => 18, 'UF_CRM_14_1773214976' => [40],
                 'UF_CRM_14_1778663165471' => '2026-10-02',
                 'UF_CRM_14_1770731674952' => '10', 'UF_CRM_14_1776177413413' => 20,
-            ] : ['ID' => 200, 'PARENT_ID_1072' => 100, 'UF_CRM_11_1770627880479' => 25];
+            ] : ['ID' => 200, 'PARENT_ID_1072' => 100, 'UF_CRM_11_1770627880479' => self::$reportHours];
+            if ($this->type === 1072) {
+                $data = array_replace($data, self::$taskOverrides);
+            }
             return $data['ID'] > ($parameters['filter']['>ID'] ?? 0) ? [new FakeNotificationItem($data)] : [];
         }
     }
@@ -129,5 +150,44 @@ namespace {
     deliveryAssert(count(CIMNotify::$messages), 3, 'Live dry run still sends nothing');
     deliveryAssert($liveDry['digests'][0]['message'][0] === '[', true, 'Normal digest rendered');
     deliveryAssert(strpos($liveDry['digests'][0]['message'], 'Проверка уведомлений') === false, true, 'Preview label absent from future live output');
+
+    // Native stage-history adapter: a self-setter developer handed off on the redline day.
+    Option::set('evolution.dev.tasks', 'delivery_mode', 'preview');
+    unset(Option::$values['evolution.dev.tasks/notification_state_v1_preview_3']);
+    CIMNotify::$messages = [];
+    FakeNotificationFactory::$reportHours = 0;
+    FakeNotificationFactory::$taskOverrides = [
+        'STAGE_ID' => 'DT1072_18:UC_5GG9S1', 'UF_CRM_14_1773214976' => [50, 40],
+        'UF_CRM_14_1778663165471' => '2026-09-30',
+    ];
+    $entry = [
+        'ID' => 900, 'OWNER_TYPE_ID' => 1072, 'OWNER_ID' => 100, 'TYPE_ID' => 2,
+        'STAGE_ID' => 'DT1072_18:UC_5GG9S1', 'CATEGORY_ID' => 18,
+        'CREATED_TIME' => new \DateTimeImmutable('2026-09-30 11:00', new \DateTimeZone('Europe/Moscow')),
+    ];
+    \Bitrix\Crm\History\Entity\EntityStageHistoryTable::$entries = [$entry];
+    $checkNow = new \DateTimeImmutable('2026-10-02 10:00', new \DateTimeZone('Europe/Moscow'));
+    $timely = Notifications::run($checkNow);
+    deliveryAssert($timely['checkingHistoryKnown'], 1, 'Native current Check visit resolved');
+    deliveryAssert(array_column($timely['digests'], 'intendedUserId'), [3, 40], 'Timely self-setter developer excluded from daily review reminders');
+    deliveryAssert(array_unique(array_column(CIMNotify::$messages, 'TO_USER_ID')), [3], 'Check preview still sends only Artem');
+    deliveryAssert(strpos($timely['digests'][0]['message'], 'Разработчик передал задачу в срок.') !== false, true, 'Timely handoff explained in review reminder');
+
+    // A later Check cycle still prompts a comment even after today's review digest was delivered.
+    \Bitrix\Crm\History\Entity\EntityStageHistoryTable::$entries[] = array_replace($entry, [
+        'ID' => 901, 'CREATED_TIME' => new \DateTimeImmutable('2026-09-30 21:30:00+00:00'),
+    ]);
+    $late = Notifications::run($checkNow);
+    deliveryAssert(array_column($late['digests'], 'intendedUserId'), [3, 50], 'Late new handoff reaches only developer and head');
+    deliveryAssert(array_column($late['digests'], 'lateHandoffCount'), [1, 1], 'Comment requests tracked apart from daily deadline digest');
+    deliveryAssert(strpos($late['digests'][1]['message'], 'напишите в комментарии') !== false, true, 'Developer receives a comment request');
+    deliveryAssert(Notifications::run($checkNow)['sent'], 0, 'Same Check handoff does not repeat');
+    deliveryAssert(array_unique(array_column(CIMNotify::$messages, 'TO_USER_ID')), [3], 'No actual developer delivery after late handoff');
+
+    // A newer non-entry history row must not resurrect the older Check visit.
+    \Bitrix\Crm\History\Entity\EntityStageHistoryTable::$entries[] = array_replace($entry, ['ID' => 902, 'TYPE_ID' => 3]);
+    $unknown = Notifications::run($checkNow, true);
+    deliveryAssert($unknown['checkingHistoryUnknown'], 1, 'Newer finalization makes stale Check visit unknown');
+    deliveryAssert($unknown['digests'], [], 'Unknown history does not invent a developer accusation');
     echo "Notification adapter preview-only targets, labels, idempotence and separate future-live state passed.\n";
 }

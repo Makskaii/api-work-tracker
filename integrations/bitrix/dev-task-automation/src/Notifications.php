@@ -56,6 +56,20 @@ final class Notifications
             $originalState = self::readState($stateOption);
             $tasks = self::readTasks();
             $result['tasks'] = count($tasks);
+            $checking = self::readCheckHandoffs($tasks);
+            $result['checkingTasks'] = $checking['taskCount'];
+            $result['checkingHistoryKnown'] = count($checking['handoffs']);
+            $result['checkingHistoryUnknown'] = $checking['taskCount'] - count($checking['handoffs']);
+            if (isset($checking['error'])) {
+                $result['historyWarning'] = $checking['error'];
+                if (!$dryRun) {
+                    self::log('Check stage history unavailable; late handoff accusations skipped');
+                }
+            }
+            foreach ($tasks as &$task) {
+                $task['checkHandoff'] = $checking['handoffs'][$task['id']] ?? null;
+            }
+            unset($task);
             $actuals = self::readActuals(array_column($tasks, 'id'));
             $result['reports'] = $actuals['reportCount'];
             $result['invalidReportHours'] = $actuals['invalidHours'];
@@ -104,6 +118,7 @@ final class Notifications
                     'actualTargetUserId' => $actualTarget, 'taskCount' => count($digest['tasks']),
                     'deadline' => $digest['deadlineDay'] !== null,
                     'overrunCount' => count($digest['overrunMarks']), 'partCount' => count($parts),
+                    'lateHandoffCount' => count($digest['handoffMarks']),
                     'message' => implode("\n\n", $parts),
                 ];
                 if ($dryRun) {
@@ -204,7 +219,7 @@ final class Notifications
         do {
             $items = $factory->getItems([
                 'filter' => ['>ID' => $lastId, '!@STAGE_ID' => NotificationPolicy::CLOSED_STAGES],
-                'select' => ['ID', 'TITLE', 'ASSIGNED_BY_ID', 'STAGE_ID', self::SETTERS_FIELD,
+                'select' => ['ID', 'TITLE', 'ASSIGNED_BY_ID', 'STAGE_ID', 'CATEGORY_ID', self::SETTERS_FIELD,
                     self::REDLINE_FIELD, self::ESTIMATE_FIELD, self::SOLD_FIELD],
                 'order' => ['ID' => 'ASC'], 'limit' => 500,
             ]);
@@ -212,6 +227,7 @@ final class Notifications
                 $lastId = (int)$item->getId();
                 $task = [
                     'id' => $lastId, 'title' => $item->getTitle(), 'stage' => $item->getStageId(),
+                    'category' => (int)$item->get('CATEGORY_ID'),
                     'assignee' => $item->getAssignedById(), 'setters' => (array)$item->get(self::SETTERS_FIELD),
                     'redline' => NotificationPolicy::date($item->get(self::REDLINE_FIELD)),
                     'estimate' => $item->get(self::ESTIMATE_FIELD), 'sold' => $item->get(self::SOLD_FIELD),
@@ -222,6 +238,51 @@ final class Notifications
             }
         } while (count($items) === 500);
         return $tasks;
+    }
+
+    private static function readCheckHandoffs(array $tasks): array
+    {
+        $checking = [];
+        foreach ($tasks as $task) {
+            if ($task['stage'] === NotificationPolicy::CHECK_STAGE) {
+                $checking[$task['id']] = $task;
+            }
+        }
+        $result = ['taskCount' => count($checking), 'handoffs' => []];
+        if ($checking === []) {
+            return $result;
+        }
+        try {
+            foreach (array_chunk(array_keys($checking), 250) as $ids) {
+                // Query entries for all stages. Filtering to Check would resurrect an older visit.
+                $entries = \Bitrix\Crm\History\Entity\EntityStageHistoryTable::getList([
+                    'filter' => ['=OWNER_TYPE_ID' => self::TASK_TYPE, '@OWNER_ID' => $ids],
+                    'select' => ['ID', 'OWNER_ID', 'OWNER_TYPE_ID', 'TYPE_ID', 'STAGE_ID', 'CATEGORY_ID', 'CREATED_TIME'],
+                    'order' => ['ID' => 'DESC'],
+                ]);
+                $latest = [];
+                while ($entry = $entries->fetch()) {
+                    $owner = (int)$entry['OWNER_ID'];
+                    if (!isset($latest[$owner])) {
+                        $latest[$owner] = $entry;
+                    }
+                    if (count($latest) === count($ids)) {
+                        break;
+                    }
+                }
+                foreach ($ids as $id) {
+                    $visit = NotificationPolicy::currentCheckVisit($checking[$id], isset($latest[$id]) ? [$latest[$id]] : []);
+                    if ($visit !== null) {
+                        $result['handoffs'][$id] = $visit;
+                    }
+                }
+            }
+        } catch (Throwable $error) {
+            // The analyst/head review reminder remains usable when history is temporarily absent.
+            $result['handoffs'] = [];
+            $result['error'] = 'check_stage_history_unavailable';
+        }
+        return $result;
     }
 
     private static function readActuals(array $taskIds): array
@@ -363,9 +424,30 @@ final class Notifications
         foreach ($task['reasons'] as $kind => $reason) {
             if ($kind === 'deadline') {
                 $redline = DateTimeImmutable::createFromFormat('!Y-m-d', $task['redline'])->format('d.m.Y');
-                $lines[] = $reason['kind'] === 'due'
-                    ? 'Сегодня редлайн: ' . $redline . '.'
-                    : 'Редлайн ' . $redline . ' просрочен на ' . $reason['days'] . ' дн.';
+                if (in_array($reason['kind'], ['review_due', 'review_overdue'], true)) {
+                    $lines[] = 'Задача ожидает проверки у аналитика.';
+                    $lines[] = $reason['kind'] === 'review_due'
+                        ? 'Сегодня редлайн: ' . $redline . '.'
+                        : 'Редлайн ' . $redline . ' прошёл ' . $reason['days'] . ' дн. назад; ожидается проверка.';
+                    if ($reason['handedOffOn'] !== null) {
+                        $handoff = DateTimeImmutable::createFromFormat('!Y-m-d', $reason['handedOffOn'])->format('d.m.Y');
+                        $lines[] = 'Передана на проверку: ' . $handoff . '.';
+                        if ($reason['handoffTiming'] === 'timely') {
+                            $lines[] = 'Разработчик передал задачу в срок.';
+                        }
+                    }
+                } else {
+                    $lines[] = $reason['kind'] === 'due'
+                        ? 'Сегодня редлайн: ' . $redline . '.'
+                        : 'Редлайн ' . $redline . ' просрочен на ' . $reason['days'] . ' дн.';
+                }
+            } elseif ($kind === 'late_handoff') {
+                $redline = DateTimeImmutable::createFromFormat('!Y-m-d', $task['redline'])->format('d.m.Y');
+                $handoff = DateTimeImmutable::createFromFormat('!Y-m-d', $reason['handedOffOn'])->format('d.m.Y');
+                $lines[] = 'Передана на проверку ' . $handoff . ' после редлайна ' . $redline . '.';
+                $lines[] = $reason['action'] === 'write_comment'
+                    ? 'Пожалуйста, напишите в комментарии к задаче причину задержки.'
+                    : 'Попросите разработчика написать в комментарии к задаче причину задержки.';
             } else {
                 $label = $kind === 'estimate' ? 'Текущая оценка' : 'Лимит часов для клиента';
                 $lines[] = $label . ': факт ' . self::number($reason['actual'])

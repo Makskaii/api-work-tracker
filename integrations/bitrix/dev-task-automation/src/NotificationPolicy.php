@@ -14,6 +14,10 @@ final class NotificationPolicy
         'DT1072_18:UC_6JNSDG', 'DT1072_18:UC_JP9WR1',
         'DT1072_18:SUCCESS', 'DT1072_18:FAIL',
     ];
+    public const IGNORED_STAGES = [
+        // A draft is not formed yet. Backlog and Hold are still actionable stages.
+        'DT1072_18:UC_A9IWFS',
+    ];
 
     public static function hours($value): ?float
     {
@@ -58,6 +62,16 @@ final class NotificationPolicy
             || in_array((string)($task['semantic'] ?? ''), ['S', 'F'], true)
             || substr($stage, -8) === ':SUCCESS'
             || substr($stage, -5) === ':FAIL';
+    }
+
+    public static function isIgnored(array $task): bool
+    {
+        return in_array((string)($task['stage'] ?? ''), self::IGNORED_STAGES, true);
+    }
+
+    public static function isNotificationExcluded(array $task): bool
+    {
+        return self::isClosed($task) || self::isIgnored($task);
     }
 
     public static function deadlineWindow(DateTimeImmutable $now): bool
@@ -199,7 +213,7 @@ final class NotificationPolicy
 
         foreach ($tasks as $task) {
             $id = (int)($task['id'] ?? 0);
-            if ($id <= 0 || self::isClosed($task)) {
+            if ($id <= 0 || self::isNotificationExcluded($task)) {
                 continue;
             }
             $openIds[(string)$id] = true;

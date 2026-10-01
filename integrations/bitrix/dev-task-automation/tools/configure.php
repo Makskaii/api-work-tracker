@@ -9,8 +9,13 @@ if (PHP_SAPI !== 'cli') {
 $mode = $argv[1] ?? 'check';
 $documentRoot = $argv[2] ?? '/home/bitrix/www';
 $backupDir = $argv[3] ?? '';
+$requestedDeliveryMode = $argv[4] ?? null;
 if (!in_array($mode, ['check', 'apply', 'restore'], true)) {
     throw new RuntimeException('Mode must be check, apply or restore.');
+}
+if ($requestedDeliveryMode !== null
+    && ($mode !== 'apply' || !in_array($requestedDeliveryMode, ['preview', 'live'], true))) {
+    throw new RuntimeException('An explicit delivery mode must be preview or live, and can only be used with apply.');
 }
 $_SERVER['DOCUMENT_ROOT'] = $documentRoot;
 define('NO_KEEP_STATISTIC', true);
@@ -23,6 +28,7 @@ require dirname(__DIR__) . '/bootstrap.php';
 use Bitrix\Main\Loader;
 use Bitrix\Main\Config\Option;
 use Evolution\DevTaskAutomation\DeliveryMode;
+use Evolution\DevTaskAutomation\Notifications;
 use Evolution\DevTaskAutomation\TemplatePatch;
 
 if (!Loader::includeModule('bizproc') || !Loader::includeModule('crm')) {
@@ -49,6 +55,11 @@ $agents = [];
 foreach ($agentNames as $agentName) {
     $agents[$agentName] = CAgent::getList([], ['NAME' => $agentName])->fetch() ?: null;
 }
+$connection = \Bitrix\Main\Application::getConnection();
+if ($mode !== 'check' && !$connection->lock(Notifications::LOCK_NAME, 30)) {
+    throw new RuntimeException('A notification scan is still running; retry configuration.');
+}
+// Read the preserved mode and backup configuration after serializing configurators.
 $deliveryOptions = [
     'delivery_mode' => Option::get(DeliveryMode::MODULE, 'delivery_mode', ''),
     'preview_recipient_id' => Option::get(DeliveryMode::MODULE, 'preview_recipient_id', ''),
@@ -76,6 +87,7 @@ if ($mode === 'restore') {
     }
     \Bitrix\Main\Application::getInstance()->getManagedCache()
         ->clean('b_option:' . DeliveryMode::MODULE, 'b_option');
+    $connection->unlock(Notifications::LOCK_NAME);
     echo "Workflow and agent configuration restored. Restore deployment files from the same backup separately.\n";
     exit;
 }
@@ -117,11 +129,13 @@ if (!file_exists($snapshotFile)) {
         throw new RuntimeException('Private workflow backup failed; nothing will be configured.');
     }
 }
-$connection = \Bitrix\Main\Application::getConnection();
-$connection->startTransaction();
+$transactionOpen = false;
 try {
-    // Current human instruction: route every new notification only to Artem.
-    Option::set(DeliveryMode::MODULE, 'delivery_mode', 'preview');
+    $connection->startTransaction();
+    $transactionOpen = true;
+    // Preserve a live installation on routine upgrades; only an explicit argument changes mode.
+    $deliveryMode = $requestedDeliveryMode ?? ($deliveryOptions['delivery_mode'] === 'live' ? 'live' : 'preview');
+    Option::set(DeliveryMode::MODULE, 'delivery_mode', $deliveryMode);
     Option::set(DeliveryMode::MODULE, 'preview_recipient_id', '3');
     if (!$loader::update($templateId, ['TEMPLATE' => $patched, 'MODIFIER_USER' => 3])) {
         throw new RuntimeException('Could not update the workflow.');
@@ -142,12 +156,14 @@ try {
         $ids[$agentName] = $id;
     }
     $connection->commitTransaction();
+    $transactionOpen = false;
+    // Keep the scan lock until the committed mode is visible to the next worker.
+    \Bitrix\Main\Application::getInstance()->getManagedCache()
+        ->clean('b_option:' . DeliveryMode::MODULE, 'b_option');
 } catch (Throwable $error) {
-    $connection->rollbackTransaction();
+    if ($transactionOpen) { $connection->rollbackTransaction(); }
     throw $error;
+} finally {
+    $connection->unlock(Notifications::LOCK_NAME);
 }
-// Option::set clears managed cache before commit. A concurrent scheduler
-// can refill it with the old committed values; clear again after commit.
-\Bitrix\Main\Application::getInstance()->getManagedCache()
-    ->clean('b_option:' . DeliveryMode::MODULE, 'b_option');
-echo json_encode(['template' => $templateId, 'agents' => $ids, 'installed' => true], JSON_PRETTY_PRINT) . "\n";
+echo json_encode(['template' => $templateId, 'agents' => $ids, 'installed' => true, 'deliveryMode' => $deliveryMode], JSON_PRETTY_PRINT) . "\n";

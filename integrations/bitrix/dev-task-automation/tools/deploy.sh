@@ -3,6 +3,11 @@ set -euo pipefail
 
 source_root=${1:?Pass the private uploaded integration directory}
 backup_root=${2:?Pass a new private backup directory outside the website}
+delivery_mode=${3:-}
+case "$delivery_mode" in
+    ''|preview|live) ;;
+    *) printf 'Delivery mode must be preview or live.\n' >&2; exit 1 ;;
+esac
 document_root=/home/bitrix/www
 target_root="$document_root/local/php_interface/evolution/dev_tasks"
 activity_root="$document_root/local/activities/evolutiondevtaskguard"
@@ -67,7 +72,9 @@ PHP
     mv "$init_file.evolution-new" "$init_file"
 fi
 
-php "$source_root/tools/configure.php" apply "$document_root" "$backup_root"
+configure_args=(apply "$document_root" "$backup_root")
+if [ -n "$delivery_mode" ]; then configure_args+=("$delivery_mode"); fi
+php "$source_root/tools/configure.php" "${configure_args[@]}"
 php "$source_root/tools/configure.php" check "$document_root"
 
 # Configuration checks can populate cache as root. Clear only this integration's
@@ -83,7 +90,7 @@ require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.
 \Bitrix\Main\Application::getInstance()->getManagedCache()
     ->clean('b_option:evolution.dev.tasks', 'b_option');
 PHP
-runuser -u bitrix -- php <<'PHP'
+EVOLUTION_EXPECTED_DELIVERY_MODE="$delivery_mode" runuser -u bitrix -- php <<'PHP'
 <?php
 $_SERVER['DOCUMENT_ROOT'] = '/home/bitrix/www';
 define('NO_KEEP_STATISTIC', true);
@@ -91,9 +98,11 @@ define('NO_AGENT_CHECK', true);
 define('NOT_CHECK_PERMISSIONS', true);
 define('DisableEventsCheck', true);
 require $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
-if (\Evolution\DevTaskAutomation\DeliveryMode::key() !== 'preview_3') {
-    throw new RuntimeException('Service account does not see preview delivery to user 3.');
+$expected = getenv('EVOLUTION_EXPECTED_DELIVERY_MODE');
+$actual = \Evolution\DevTaskAutomation\DeliveryMode::isPreview() ? 'preview' : 'live';
+if ($expected !== '' && $actual !== $expected) {
+    throw new RuntimeException('Service account does not see the requested delivery mode.');
 }
-echo "Scheduler delivery verified: preview_3.\n";
+echo 'Scheduler delivery verified: ' . \Evolution\DevTaskAutomation\DeliveryMode::key() . ".\n";
 PHP
 printf 'Private backup: %s\n' "$backup_root"

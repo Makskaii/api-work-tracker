@@ -21,9 +21,15 @@ final class DeliveryMode
         return $id !== false && $id > 0 ? $id : 3;
     }
 
-    public static function target(int $intendedRecipient): int
+    public static function target(int $intendedRecipient, ?string $modeKey = null): int
     {
-        return self::isPreview() ? self::previewRecipient() : $intendedRecipient;
+        $modeKey = $modeKey ?? self::key();
+        if ($modeKey === 'live') { return $intendedRecipient; }
+        if (preg_match('/^preview_([1-9][0-9]*)$/', $modeKey, $matches)) {
+            $id = filter_var($matches[1], FILTER_VALIDATE_INT);
+            if ($id !== false && $id > 0) { return $id; }
+        }
+        return 3;
     }
 
     public static function key(): string
@@ -31,9 +37,10 @@ final class DeliveryMode
         return self::isPreview() ? 'preview_' . self::previewRecipient() : 'live';
     }
 
-    public static function prefix(int $intendedRecipient): string
+    public static function prefix(int $intendedRecipient, ?string $modeKey = null): string
     {
-        if (!self::isPreview()) { return ''; }
+        $modeKey = $modeKey ?? self::key();
+        if ($modeKey === 'live') { return ''; }
         $name = 'Сотрудник №' . $intendedRecipient;
         if (class_exists('CUser')) {
             $user = \CUser::GetByID($intendedRecipient)->Fetch();

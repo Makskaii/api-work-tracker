@@ -2,7 +2,7 @@
 
 This integration runs in the existing self-hosted Bitrix24 CRM, separately from the NestJS API. It uses native CRM operations, a local business-process activity and the existing minute-based Bitrix agent scheduler. It does not replace the CRM factory or change permissions.
 
-**Current delivery mode is preview.** Every new integration notification is routed only to Artem (user 3), with a label naming its intended recipient. No new notification is sent to the actual developer, setter or other department head. Preview delivery state and tags are separate from live state. Enabling real delivery requires a later explicit human instruction and a configuration change; the deployment tool deliberately enables preview only.
+**Production delivery is live, authorized on 1 October 2026.** Integration notifications go to their actual recipients. Preview remains the default for a new unconfigured installation: it routes notifications only to Artem (user 3), with a label naming their intended recipient. Preview and live delivery state and tags are separate, so earlier test messages do not suppress real alerts. Routine deployments preserve the configured delivery mode; changing it requires an explicit `preview` or `live` argument.
 
 ## Rules
 
@@ -20,6 +20,8 @@ All actual hours from linked daily reports count, including reports hidden from 
 
 Completed/cancelled custom stages are explicitly excluded because their Bitrix stage semantics are empty. Native successful/failed stages are also excluded. Deleted reports are excluded by native CRM reads. Existing overdue tasks are included in the first daily digest. Existing overrun tasks are included in the first overrun digest rather than generating one message per task.
 
+The custom **Не сформированная задача** stage (`DT1072_18:UC_A9IWFS`) is excluded from every notification check, even if a redline or an exceeded estimate/client budget is filled in. The Backlog stage (`DT1072_18:NEW`) remains distinct and is not excluded by this rule. **Удержание** (`DT1072_18:UC_L2I5S0`) is an open blocked-task stage: ordinary redline, estimate and client-budget checks still apply. Moving an ignored task into an eligible stage makes it subject to those rules again.
+
 ## Files and deployment
 
 - `src/` and `bootstrap.php` map to `/home/bitrix/www/local/php_interface/evolution/dev_tasks/`.
@@ -27,7 +29,7 @@ Completed/cancelled custom stages are explicitly excluded because their Bitrix s
 - Add `require_once $_SERVER['DOCUMENT_ROOT'] . '/local/php_interface/evolution/dev_tasks/bootstrap.php';` to the existing `bitrix/php_interface/init.php` without changing its other includes.
 - `tools/configure.php` is CLI-only. Keep deployment tools, configuration snapshots and template exports outside the web root.
 
-Before deployment, back up the existing init file, any existing integration/activity files and the workflow. Upload the integration and lint all PHP files. `configure.php check /home/bitrix/www` validates the patched workflow without changing it. Review a notification dry run before enabling delivery. Then run `configure.php apply /home/bitrix/www /private/backup/directory` to back up and update only template 217, and register the notification agent. The command is idempotent.
+Before deployment, back up the existing init file, any existing integration/activity files and the workflow. Upload the integration and lint all PHP files. `configure.php check /home/bitrix/www` validates the patched workflow without changing it. Review a notification dry run before enabling delivery. Then run `configure.php apply /home/bitrix/www /private/backup/directory` to back up and update only template 217, and register the notification agent. The command is idempotent and preserves the current delivery mode. After human authorization, append `live` to that command (or pass `live` as the third argument to `deploy.sh`) to deliver to actual recipients. Append `preview` to return to test delivery. A new installation without an explicit mode starts in preview.
 
 To restore, disable the integration agent and restore template 217 using the saved configuration, then restore the original files from that same backup. The integration does not delete or change existing task/report data on installation.
 

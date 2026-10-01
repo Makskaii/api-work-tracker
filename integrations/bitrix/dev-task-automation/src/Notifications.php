@@ -41,10 +41,6 @@ final class Notifications
             if (!Loader::includeModule('crm') || !Loader::includeModule('im')) {
                 throw new RuntimeException('Required CRM/IM module is unavailable');
             }
-            $modeKey = DeliveryMode::key();
-            $result['mode'] = DeliveryMode::isPreview() ? 'preview' : 'live';
-            $result['modeKey'] = $modeKey;
-            $stateOption = self::stateOption($modeKey);
             $connection = Application::getConnection();
             if (!$dryRun) {
                 $locked = $connection->lock(self::LOCK_NAME, 0);
@@ -53,6 +49,12 @@ final class Notifications
                     return $result;
                 }
             }
+            // Configuration uses the same lock; capture routing only after it is acquired.
+            // One scan must use the same mode for recipients, tags, prefixes and state.
+            $modeKey = DeliveryMode::key();
+            $result['mode'] = $modeKey === 'live' ? 'live' : 'preview';
+            $result['modeKey'] = $modeKey;
+            $stateOption = self::stateOption($modeKey);
             $originalState = self::readState($stateOption);
             $tasks = self::readTasks();
             $result['tasks'] = count($tasks);
@@ -103,11 +105,11 @@ final class Notifications
                     continue;
                 }
                 $pending = $state['pendingDigests'][(string)$digest['userId']] ?? null;
-                $actualTarget = DeliveryMode::target($digest['userId']);
+                $actualTarget = DeliveryMode::target($digest['userId'], $modeKey);
                 if ($pending !== null) {
                     $parts = $pending['parts'];
                 } else {
-                    $prefix = DeliveryMode::prefix($digest['userId']);
+                    $prefix = DeliveryMode::prefix($digest['userId'], $modeKey);
                     $budget = 18000 - max(200, mb_strlen($prefix));
                     $parts = array_map(static function (string $part) use ($prefix): string {
                         return $prefix . $part;
@@ -218,7 +220,9 @@ final class Notifications
         $lastId = 0;
         do {
             $items = $factory->getItems([
-                'filter' => ['>ID' => $lastId, '!@STAGE_ID' => NotificationPolicy::CLOSED_STAGES],
+                'filter' => ['>ID' => $lastId, '!@STAGE_ID' => array_merge(
+                    NotificationPolicy::CLOSED_STAGES, NotificationPolicy::IGNORED_STAGES
+                )],
                 'select' => ['ID', 'TITLE', 'ASSIGNED_BY_ID', 'STAGE_ID', 'CATEGORY_ID', self::SETTERS_FIELD,
                     self::REDLINE_FIELD, self::ESTIMATE_FIELD, self::SOLD_FIELD],
                 'order' => ['ID' => 'ASC'], 'limit' => 500,
@@ -232,7 +236,7 @@ final class Notifications
                     'redline' => NotificationPolicy::date($item->get(self::REDLINE_FIELD)),
                     'estimate' => $item->get(self::ESTIMATE_FIELD), 'sold' => $item->get(self::SOLD_FIELD),
                 ];
-                if (!NotificationPolicy::isClosed($task)) {
+                if (!NotificationPolicy::isNotificationExcluded($task)) {
                     $tasks[] = $task;
                 }
             }

@@ -164,6 +164,50 @@ $cases['completed cancelled deleted tasks prune state'] = static function (): vo
     }
     notificationAssert(Policy::evaluate([], 3, $state, notificationNow('2026-10-01 09:01'))['state']['thresholds'], [], 'Deleted report/task does not remain forever');
 };
+$cases['unformed drafts ignore deadlines and both overruns and remove old alert state'] = static function (): void {
+    $checking = notificationTask([
+        'stage' => Policy::CHECK_STAGE, 'actual' => 25, 'redline' => '2026-09-30',
+        'checkHandoff' => ['id' => 900, 'date' => '2026-10-01'],
+    ]);
+    $state = notificationDeliverAll(Policy::evaluate([$checking], 3, [], notificationNow('2026-10-02 10:00')));
+    foreach (Policy::IGNORED_STAGES as $stage) {
+        $draft = array_replace($checking, ['stage' => $stage]);
+        notificationAssert(Policy::isClosed($draft), false, 'A draft is not a completed task');
+        notificationAssert(Policy::isIgnored($draft), true, 'Verified unformed stage is ignored');
+        $ignored = Policy::evaluate([$draft], 3, $state, notificationNow('2026-10-05 10:00'));
+        notificationAssert($ignored['digests'], [], 'Draft produces no deadline, estimate or sold-hours alert');
+        notificationAssert($ignored['state']['thresholds'], [], 'Draft cannot retain an overrun crossing');
+        notificationAssert($ignored['state']['handoffAlerts'], [], 'Draft cannot retain a Check accusation');
+    }
+    foreach (['DT1072_18:NEW', 'DT1072_18:UC_L2I5S0'] as $stage) {
+        notificationAssert(Policy::isNotificationExcluded(notificationTask(['stage' => $stage])), false, 'Backlog and Hold remain eligible');
+    }
+};
+$cases['Hold preserves ordinary deadline and two-budget routing and delivery deduplication'] = static function (): void {
+    $task = notificationTask(['stage' => 'DT1072_18:UC_L2I5S0', 'actual' => 25]);
+    $evaluation = Policy::evaluate([$task], 3, [], notificationNow('2026-10-01 10:00'));
+    notificationAssert(array_column($evaluation['digests'], 'userId'), [3, 40, 50], 'Hold reaches ordinary three roles');
+    notificationAssert(array_keys(notificationUserDigest($evaluation['digests'], 3)['tasks'][0]['reasons']), ['deadline', 'estimate', 'sold'], 'Head sees all Hold reasons');
+    notificationAssert(array_keys(notificationUserDigest($evaluation['digests'], 40)['tasks'][0]['reasons']), ['deadline', 'sold'], 'Setter sees deadline and client budget');
+    notificationAssert(array_keys(notificationUserDigest($evaluation['digests'], 50)['tasks'][0]['reasons']), ['deadline', 'estimate'], 'Developer sees deadline and estimate');
+    $state = notificationDeliverAll($evaluation);
+    notificationAssert(Policy::evaluate([$task], 3, $state, notificationNow('2026-10-01 10:01'))['digests'], [], 'Hold does not repeat every minute');
+    $tomorrow = Policy::evaluate([$task], 3, $state, notificationNow('2026-10-02 10:00'));
+    foreach ($tomorrow['digests'] as $digest) {
+        notificationAssert(array_keys($digest['tasks'][0]['reasons']), ['deadline'], 'Only the daily deadline repeats');
+    }
+};
+$cases['Hold deadlines wait for Moscow weekday window while overrun crossing stays immediate'] = static function (): void {
+    $task = notificationTask(['stage' => 'DT1072_18:UC_L2I5S0']);
+    foreach (['2026-10-02 09:59', '2026-10-03 10:00', '2026-10-04 10:00'] as $time) {
+        notificationAssert(Policy::evaluate([$task], 3, [], notificationNow($time))['digests'], [], 'Hold deadline waits outside weekday 10:00 window');
+    }
+    $overrun = Policy::evaluate([array_replace($task, ['actual' => 25])], 3, [], notificationNow('2026-10-03 08:00'));
+    notificationAssert(array_column($overrun['digests'], 'userId'), [3, 40, 50], 'Hold budget crossings are not hidden by the deadline window');
+    foreach ($overrun['digests'] as $digest) {
+        notificationAssert(isset($digest['tasks'][0]['reasons']['deadline']), false, 'No weekend deadline mixed into budget notice');
+    }
+};
 $cases['ordinary unchanged scan does not mutate state'] = static function (): void {
     $first = Policy::evaluate([notificationTask()], 3, [], notificationNow('2026-10-01 09:00'));
     $stored = json_decode(json_encode($first['state'], JSON_PRESERVE_ZERO_FRACTION), true);
@@ -218,10 +262,10 @@ $cases['pending retries freeze only still-valid reasons and recipients'] = stati
     $state['pendingDigests'][50] = $pending;
     $growth = Policy::evaluate([array_replace($task, ['actual' => 13])], 3, $state, $now);
     notificationAssert(Policy::pendingIsCurrent($pending, notificationUserDigest($growth['digests'], 50)), true, 'Same crossing keeps exact retry body when hours grow');
-    foreach ([['stage' => Policy::CHECK_STAGE], ['stage' => 'DT1072_18:UC_6JNSDG'], ['actual' => 9, 'redline' => '2026-10-03'], ['redline' => '2026-10-03']] as $change) {
+    foreach ([['stage' => Policy::CHECK_STAGE], ['stage' => 'DT1072_18:UC_6JNSDG'], ['stage' => Policy::IGNORED_STAGES[0]], ['actual' => 9, 'redline' => '2026-10-03'], ['redline' => '2026-10-03']] as $change) {
         $current = Policy::evaluate([array_replace($task, $change)], 3, $state, $now);
         $candidate = notificationUserDigest($current['digests'], 50);
-        notificationAssert(Policy::pendingIsCurrent($pending, $candidate === [] ? null : $candidate), false, 'Check/done/correction/date change drops stale pending payload');
+        notificationAssert(Policy::pendingIsCurrent($pending, $candidate === [] ? null : $candidate), false, 'Check/done/draft/correction/date change drops stale pending payload');
     }
     notificationAssert(Policy::pendingIsCurrent(['userId' => 50, 'key' => $original['key'], 'partCount' => 2, 'parts' => ['one']], $original), false, 'Incomplete stored page data cannot count as delivered');
 };

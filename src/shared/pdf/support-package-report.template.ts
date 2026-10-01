@@ -145,7 +145,7 @@ export const buildSupportPackageReportHtml = (data: SupportPackageReportData, wa
   <p class="scope-note">Объём задачи - согласованный объём работ. В сводке указаны фактические списания и остаток пакета${hasPeriod ? ' на конец выбранного периода' : ''}.</p>
   ${tasksHtml ? `<h2>Задачи</h2>${tasksHtml}` : ''}
   ${data.reportsWithoutTask.length ? `<h2>Отдельные работы</h2>${reportTable(data.reportsWithoutTask)}` : ''}
-  ${data.tasks.length === 0 && data.reportsWithoutTask.length === 0 ? '<p class="empty">В этом пакете пока нет задач и выполненных работ.</p>' : ''}
+  ${data.tasks.length === 0 && data.reportsWithoutTask.length === 0 ? `<p class="empty">${hasPeriod ? 'В выбранном периоде работ по этому пакету нет.' : 'В этом пакете пока нет задач и выполненных работ.'}</p>` : ''}
   <div class="totals"><span>Всего списано из пакета</span><span>${escapeHtml(hours(data.spentHours))}</span></div>
 </main></body></html>`
 }

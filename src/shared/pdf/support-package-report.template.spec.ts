@@ -142,6 +142,15 @@ describe('support package PDF content', () => {
     expect(html).not.toContain('<th>Выполненные работы</th>')
   })
 
+  it('keeps an empty selected period distinct from an empty package with no earlier charges', () => {
+    const html = buildSupportPackageReportHtml({ ...sample, dateFrom: '2026-09-20', dateTo: '2026-09-20', periodSpentHours: 0, tasks: [], reportsWithoutTask: [] })
+    expect(html).toContain('В выбранном периоде работ по этому пакету нет.')
+    expect(html).not.toContain('В этом пакете пока нет задач и выполненных работ.')
+    expect(html).toContain('14,5 ч')
+    expect(html).toContain('65,5 ч')
+    expect(html).toContain('Списано за выбранный период: <strong>0 ч</strong>')
+  })
+
   it('keeps an explicit zero task volume distinct from a missing volume', () => {
     const html = buildSupportPackageReportHtml({ ...sample, tasks: [{ ...sample.tasks[0], soldHours: 0 }] })
     expect(html).toContain('0 ч<small>Объём задачи</small>')

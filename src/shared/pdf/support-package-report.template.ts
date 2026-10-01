@@ -1,3 +1,5 @@
+import dayjs from 'dayjs'
+
 export type SupportPackageReportRow = {
   id: string
   date: string
@@ -18,6 +20,9 @@ export type SupportPackageReportData = {
   purchasedHours: number
   spentHours: number
   remainingHours: number
+  dateFrom?: string
+  dateTo?: string
+  periodSpentHours?: number
   tasks: Array<{
     id: string
     title: string
@@ -26,6 +31,7 @@ export type SupportPackageReportData = {
     soldHours: number | null
     totalHours: number
     reports: SupportPackageReportRow[]
+    clientReports?: SupportPackageReportRow[]
     otherPackageReports: SupportPackageOtherReportRow[]
     unallocatedReports?: SupportPackageReportRow[]
   }>
@@ -40,7 +46,7 @@ const number = (value: number) => new Intl.NumberFormat('ru-RU', { maximumFracti
 const hours = (value: number) => `${number(value)} ч`
 const reportRows = (reports: SupportPackageReportRow[]) => reports.map((report) => `
   <tr>
-    <td class="report-description">${escapeHtml(report.description || `Отчёт №${report.id}`)}</td>
+    <td class="report-description">${escapeHtml(report.description || 'Описание работы не указано')}</td>
     <td class="report-hours">${escapeHtml(hours(report.hours))}</td>
   </tr>`).join('')
 
@@ -52,45 +58,30 @@ const reportTable = (reports: SupportPackageReportRow[]) => `
   </table>`
 
 const taskStatus = (status: SupportPackageReportData['tasks'][number]['status']) => ({
-  in_work: 'В работе', completed: 'Выполнена', cancelled: 'Отменена', unknown: 'Статус недоступен',
+  in_work: 'В процессе', completed: 'Выполнена', cancelled: 'Отменена', unknown: 'Статус недоступен',
 }[status])
 
-const otherPackageTable = (reports: SupportPackageOtherReportRow[]) => `
-  <p class="other-package-label">Работы, учтённые в других пакетах — в списания этого пакета не входят</p>
-  <table class="reports-table other-package-table">
-    <colgroup><col><col class="hours-column"></colgroup>
-    <thead><tr><th>Выполненные работы</th><th class="report-hours">Часы</th></tr></thead>
-    <tbody>${reports.map((report) => `<tr>
-      <td class="report-description">${escapeHtml(report.description || `Отчёт №${report.id}`)}<span class="allocation-note">Учтено в пакете №${escapeHtml(String(report.packageId))} · Не входит в этот пакет</span></td>
-      <td class="report-hours">${escapeHtml(hours(report.hours))}</td>
-    </tr>`).join('')}</tbody>
-  </table>`
-
-const unallocatedTable = (reports: SupportPackageReportRow[]) => `
-  <p class="other-package-label">Работы, не распределённые по пакетам</p>
-  <table class="reports-table other-package-table">
-    <colgroup><col><col class="hours-column"></colgroup>
-    <thead><tr><th>Выполненные работы</th><th class="report-hours">Часы</th></tr></thead>
-    <tbody>${reports.map((report) => `<tr>
-      <td class="report-description">${escapeHtml(report.description || `Отчёт №${report.id}`)}<span class="allocation-note">Не распределено по пакетам; в итог пакета не входит</span></td>
-      <td class="report-hours">${escapeHtml(hours(report.hours))}</td>
-    </tr>`).join('')}</tbody>
-  </table>`
-
-/** The report uses actual package charges, not task estimates or completion status. */
+/** Task presentation is separate from the package's actual charge summary. */
 export const buildSupportPackageReportHtml = (data: SupportPackageReportData, watermarkUrl?: string): string => {
-  const reportCount = data.tasks.reduce((total, task) => total + task.reports.length, data.reportsWithoutTask.length)
-  const tasksHtml = data.tasks.map((task, index) => `
+  const hasPeriod = Boolean(data.dateFrom && data.dateTo)
+  const tasksHtml = data.tasks.map((task, index) => {
+    const completed = task.status === 'completed'
+    const reports = task.clientReports ?? task.reports
+    return `
     <section class="task-block">
-      <div class="task-heading">
+      <div class="task-heading${completed ? ' with-works' : ''}">
         <h3>${index + 1}. ${escapeHtml(task.title)}<span class="task-status ${task.status}">${taskStatus(task.status)}</span></h3>
-        <strong>${escapeHtml(number(task.totalHours))} / ${task.soldHours === null ? '—' : escapeHtml(number(task.soldHours))} ч<small>Сделано / Всего</small></strong>
+        <strong>${task.soldHours === null ? 'Не указан' : escapeHtml(hours(task.soldHours))}<small>Объём задачи</small></strong>
       </div>
-      <p class="task-summary">Из выбранного пакета: ${escapeHtml(hours(task.hours))}${task.soldHours === null ? ' · Общий лимит часов по задаче не указан' : ''}</p>
-      ${task.reports.length ? reportTable(task.reports) : `<p class="task-empty">${task.otherPackageReports.length || task.unallocatedReports?.length ? 'В этом пакете отчётов по задаче пока нет.' : 'Отчётов по задаче пока нет.'}</p>`}
-      ${task.otherPackageReports.length ? otherPackageTable(task.otherPackageReports) : ''}
-      ${task.unallocatedReports?.length ? unallocatedTable(task.unallocatedReports) : ''}
-    </section>`).join('')
+      ${completed ? (reports.length ? reportTable(reports) : '<p class="task-empty">Описание выполненных работ пока не добавлено.</p>') : ''}
+    </section>`
+  }).join('')
+  const period = hasPeriod
+    ? `<p class="report-period">Период отчёта: ${escapeHtml(dayjs(data.dateFrom).format('DD.MM.YYYY'))} - ${escapeHtml(dayjs(data.dateTo).format('DD.MM.YYYY'))}</p>`
+    : ''
+  const periodSpent = data.periodSpentHours !== undefined
+    ? `<p class="period-summary">Списано за выбранный период: <strong>${escapeHtml(hours(data.periodSpentHours))}</strong></p>`
+    : ''
   // Only locally embedded artwork is allowed; report text cannot introduce remote resources.
   const watermark = watermarkUrl?.startsWith('data:image/')
     ? `<img class="watermark" src="${escapeHtml(watermarkUrl)}" alt="">`
@@ -111,6 +102,8 @@ export const buildSupportPackageReportHtml = (data: SupportPackageReportData, wa
     .project-name { margin: 0 0 4px; font-size: 17px; font-weight: 700; overflow-wrap: anywhere; }
     .client-name { margin: 0 0 12px; color: #555; }
     .report-meta { margin: 0 0 20px; color: #555; }
+    .report-period { margin: -12px 0 8px; color: #555; }
+    .period-summary { margin: 0 0 20px; color: #316f74; }
     .summary-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; table-layout: fixed; break-inside: avoid; }
     .summary-table th { background: #3c868c; color: #fff; font-size: 11px; font-weight: 400; text-align: left; padding: 9px 12px; border: 1px solid #3c868c; }
     .summary-table td { border: 1px solid #cddddd; padding: 10px 12px; font-size: 24px; font-weight: 700; vertical-align: top; }
@@ -118,7 +111,8 @@ export const buildSupportPackageReportHtml = (data: SupportPackageReportData, wa
     .scope-note { color: #626970; font-size: 10px; margin: 0 0 22px; }
     h2 { margin: 23px 0 12px; font-size: 16px; color: #316f74; break-after: avoid; page-break-after: avoid; }
     .task-block { margin: 0 0 18px; }
-    .task-heading { display: flex; align-items: flex-start; gap: 16px; margin: 0; padding: 9px 10px; background: #eef5f5; border: 1px solid #d5e1e1; border-bottom: 0; break-after: avoid; page-break-after: avoid; }
+    .task-heading { display: flex; align-items: flex-start; gap: 16px; margin: 0; padding: 9px 10px; background: #eef5f5; border: 1px solid #d5e1e1; break-inside: avoid; page-break-inside: avoid; }
+    .task-heading.with-works { border-bottom: 0; break-after: avoid; page-break-after: avoid; }
     h3 { flex: 1; min-width: 0; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
     .task-heading strong { white-space: nowrap; color: #316f74; }
     .task-heading strong small { display: block; font-size: 9px; font-weight: 400; }
@@ -126,11 +120,7 @@ export const buildSupportPackageReportHtml = (data: SupportPackageReportData, wa
     .task-status.completed { background: #dcefe4; color: #236b46; }
     .task-status.unknown { background: #e7e7e7; color: #555; }
     .task-status.cancelled { background: #f3e4e4; color: #8b4141; }
-    .task-summary { margin: 0; padding: 7px 10px; border: 1px solid #d5e1e1; border-bottom: 0; color: #555; font-size: 10px; break-after: avoid; page-break-after: avoid; }
     .task-empty { margin: 0; padding: 10px; border: 1px solid #d5e1e1; color: #626970; font-size: 10px; }
-    .other-package-label { margin: 10px 0 0; padding: 7px 10px; border: 1px solid #ddd; border-bottom: 0; background: #f3f3f3; color: #555; font-size: 10px; break-after: avoid; page-break-after: avoid; }
-    .other-package-table { color: #555; }
-    .allocation-note { display: block; margin-top: 5px; color: #626970; font-size: 10px; }
     .reports-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     .hours-column { width: 70px; }
     .reports-table thead { display: table-header-group; }
@@ -145,16 +135,17 @@ export const buildSupportPackageReportHtml = (data: SupportPackageReportData, wa
 </head>
 <body>${watermark}<main>
   <p class="eyebrow">Техническая поддержка</p>
-  <h1>Отчёт по пакету часов</h1>
+  <h1>${hasPeriod ? 'Отчёт за период' : 'Отчёт по пакету часов'}</h1>
   <p class="project-name">${escapeHtml(data.projectTitle)}</p>
   ${data.clientName ? `<p class="client-name">${escapeHtml(data.clientName)}</p>` : ''}
   <p class="report-meta">Пакет №${data.packageId}</p>
-  <table class="summary-table"><thead><tr><th>Объём пакета</th><th>Потрачено</th><th>Осталось</th></tr></thead>
+  ${period}${periodSpent}
+  <table class="summary-table"><thead><tr><th>Объём пакета</th><th>Списано из пакета</th><th>Осталось</th></tr></thead>
   <tbody><tr><td>${escapeHtml(hours(data.purchasedHours))}</td><td>${escapeHtml(hours(data.spentHours))}</td><td class="${data.remainingHours < 0 ? 'negative' : ''}">${escapeHtml(hours(data.remainingHours))}</td></tr></tbody></table>
-  <p class="scope-note">В итогах пакета учтены только его списания. Общие часы задач, работы из других пакетов и нераспределённые часы приведены отдельно.</p>
-  ${tasksHtml ? `<h2>Работы по задачам</h2>${tasksHtml}` : ''}
+  <p class="scope-note">Объём задачи - согласованный объём работ. В сводке указаны фактические списания и остаток пакета${hasPeriod ? ' на конец выбранного периода' : ''}.</p>
+  ${tasksHtml ? `<h2>Задачи</h2>${tasksHtml}` : ''}
   ${data.reportsWithoutTask.length ? `<h2>Отдельные работы</h2>${reportTable(data.reportsWithoutTask)}` : ''}
-  ${reportCount === 0 ? '<p class="empty">В этом пакете пока нет списаний за выполненные работы.</p>' : ''}
-  <div class="totals"><span>Всего списано</span><span>${escapeHtml(hours(data.spentHours))}</span></div>
+  ${data.tasks.length === 0 && data.reportsWithoutTask.length === 0 ? `<p class="empty">${hasPeriod ? 'В выбранном периоде работ по этому пакету нет.' : 'В этом пакете пока нет задач и выполненных работ.'}</p>` : ''}
+  <div class="totals"><span>Всего списано из пакета</span><span>${escapeHtml(hours(data.spentHours))}</span></div>
 </main></body></html>`
 }

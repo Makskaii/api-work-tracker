@@ -14,6 +14,7 @@ import type { SupportHoursPackage } from './entities/support-hours-package.entit
 import type { SupportHoursPackageReportSnapshot } from './support-hours-package-report.types'
 import { SupportHoursPackagesService } from './support-hours-packages.service'
 import { SupportPackageChecksService } from './support-package-checks.service'
+import { validateSupportPackageReportScope, type SupportPackageReportScope } from './dto/download-support-package-report.dto'
 
 dayjs.extend(utc)
 dayjs.extend(timezone)
@@ -24,9 +25,44 @@ const hoursValue = (value: unknown) => {
   return Number.isFinite(hours) ? hours : 0
 }
 
-export function buildSupportPackageReportData(item: SupportHoursPackage & Partial<Pick<SupportHoursPackageReportSnapshot, 'taskContexts'>>, now = new Date()): SupportPackageReportData {
+/** Distribute an agreed client volume without changing actual work or package charges. */
+export function distributeSupportClientReportHours(rows: readonly SupportPackageReportRow[], agreedHours: number | null): SupportPackageReportRow[] {
+  if (agreedHours === null) return rows.map((row) => ({ ...row }))
+  const cents = Math.round(agreedHours * 100)
+  if (!Number.isSafeInteger(cents) || cents < 0) throw new BadRequestException('Некорректный объём часов задачи')
+  const weighted = rows.map((row, index) => {
+    const weight = Math.round(hoursValue(row.hours) * 100)
+    if (!Number.isSafeInteger(weight) || weight < 0) throw new BadRequestException('Некорректный объём часов работы')
+    return { row, index, weight: BigInt(weight), cents: 0n, remainder: 0n }
+  })
+  const totalWeight = weighted.reduce((sum, row) => sum + row.weight, 0n)
+  if (totalWeight === 0n) return weighted.map(({ row }) => ({ ...row, hours: 0 }))
+  for (const row of weighted) {
+    const share = BigInt(cents) * row.weight
+    row.cents = share / totalWeight
+    row.remainder = share % totalWeight
+  }
+  let remaining = BigInt(cents) - weighted.reduce((sum, row) => sum + row.cents, 0n)
+  const largestRemainders = [...weighted].sort((first, second) => {
+    if (first.remainder !== second.remainder) return first.remainder > second.remainder ? -1 : 1
+    return first.row.date.localeCompare(second.row.date)
+      || first.row.id.localeCompare(second.row.id, undefined, { numeric: true })
+      || first.index - second.index
+  })
+  for (const row of largestRemainders) {
+    if (remaining === 0n) break
+    row.cents += 1n
+    remaining -= 1n
+  }
+  return weighted.map(({ row, cents: allocated }) => ({ ...row, hours: Number(allocated) / 100 }))
+}
+
+export function buildSupportPackageReportData(item: SupportHoursPackage & Partial<Pick<SupportHoursPackageReportSnapshot, 'taskContexts'>>, now = new Date(), requestedScope?: SupportPackageReportScope): SupportPackageReportData {
   const asOfDate = dayjs(now).tz(REPORT_TIMEZONE).format('YYYY-MM-DD')
+  const scope = validateSupportPackageReportScope(requestedScope, now)
+  const balanceDate = scope?.dateTo ?? asOfDate
   if (item.purchaseDate > asOfDate) throw new BadRequestException('Cannot generate a current report for a future package')
+  if (scope && scope.dateTo < item.purchaseDate) throw new BadRequestException('Период отчёта заканчивается до даты покупки пакета')
   const reports = new Map<string, { row: SupportPackageReportRow; taskId: string | null; taskTitle: string | null }>()
   const companyNames = new Set<string>()
   for (const consumption of item.consumptions) {
@@ -36,7 +72,7 @@ export function buildSupportPackageReportData(item: SupportHoursPackage & Partia
     const reportDay = dayjs(report.reportDate)
     if (!reportDay.isValid()) continue
     const date = reportDay.tz(REPORT_TIMEZONE).format('YYYY-MM-DD')
-    if (date > asOfDate) continue
+    if (date > balanceDate) continue
     const hours = hoursValue(consumption.hours)
     if (hours <= 0) continue
     const id = report.bitrixReportId || String(report.id)
@@ -71,6 +107,7 @@ export function buildSupportPackageReportData(item: SupportHoursPackage & Partia
       soldHours: null,
       totalHours: 0,
       reports: [],
+      clientReports: [],
       otherPackageReports: [],
       unallocatedReports: [],
     }
@@ -79,7 +116,8 @@ export function buildSupportPackageReportData(item: SupportHoursPackage & Partia
   }
   const reportsWithoutTask: SupportPackageReportRow[] = []
   const ordered = [...reports.values()].sort((first, second) => first.row.date.localeCompare(second.row.date) || first.row.id.localeCompare(second.row.id, undefined, { numeric: true }))
-  for (const report of ordered) {
+  const selected = scope ? ordered.filter((report) => report.row.date >= scope.dateFrom) : ordered
+  for (const report of selected) {
     if (!report.taskId) {
       reportsWithoutTask.push(report.row)
       continue
@@ -90,21 +128,28 @@ export function buildSupportPackageReportData(item: SupportHoursPackage & Partia
     task.totalHours = task.hours
   }
   for (const context of item.taskContexts ?? []) {
-    const task = tasks.get(context.id) ?? (context.assignedToPackage ? ensureTask(context.id, context.title) : null)
-    // Explicit package assignments remain visible before the first charge.
+    const task = tasks.get(context.id) ?? (!scope && context.assignedToPackage ? ensureTask(context.id, context.title) : null)
+    // Full-package reports retain task-only assignments. A period selects tasks by actual work dates.
     if (!task) continue
     task.title = context.title || task.title
     task.status = context.status
     task.soldHours = context.soldHours
     const relatedReports = new Map(context.reports.map((report) => [report.bitrixReportId || String(report.id), report]))
+    const wholeTaskRows: SupportPackageReportRow[] = []
     let totalHours = 0
     for (const [id, report] of relatedReports) {
       const reportDay = dayjs(report.reportDate)
       if (!reportDay.isValid()) continue
       const date = reportDay.tz(REPORT_TIMEZONE).format('YYYY-MM-DD')
       if (date > asOfDate) continue
+      const actualHours = hoursValue(report.hours)
+      if (actualHours <= 0) continue
+      wholeTaskRows.push({
+        id, date, hours: roundHours(actualHours),
+        description: report.reportDescription?.trim() || report.reportTitle?.trim() || `Отчёт №${id}`,
+      })
       // Count a report once even when several packages pay portions of it.
-      totalHours = roundHours(totalHours + hoursValue(report.hours))
+      totalHours = roundHours(totalHours + actualHours)
       const allocations = new Map<number, number>()
       let allocatedTotal = 0
       for (const allocation of report.consumptions ?? []) {
@@ -128,6 +173,11 @@ export function buildSupportPackageReportData(item: SupportHoursPackage & Partia
       }
     }
     task.totalHours = totalHours
+    wholeTaskRows.sort((first, second) => first.date.localeCompare(second.date) || first.id.localeCompare(second.id, undefined, { numeric: true }))
+    // A touched task is shown whole, even when its work lies outside the selected period or package.
+    task.clientReports = context.status === 'completed'
+      ? distributeSupportClientReportHours(wholeTaskRows, context.soldHours)
+      : []
     task.otherPackageReports.sort((first, second) => first.date.localeCompare(second.date) || first.id.localeCompare(second.id, undefined, { numeric: true }) || first.packageId - second.packageId)
     task.unallocatedReports!.sort((first, second) => first.date.localeCompare(second.date) || first.id.localeCompare(second.id, undefined, { numeric: true }))
   }
@@ -142,6 +192,11 @@ export function buildSupportPackageReportData(item: SupportHoursPackage & Partia
     purchasedHours,
     spentHours,
     remainingHours: roundHours(purchasedHours - spentHours),
+    ...(scope ? {
+      dateFrom: scope.dateFrom,
+      dateTo: scope.dateTo,
+      periodSpentHours: roundHours(selected.reduce((sum, report) => sum + report.row.hours, 0)),
+    } : {}),
     tasks: [...tasks.values()],
     reportsWithoutTask,
   }
@@ -155,18 +210,21 @@ export class SupportHoursPackageReportService {
     private readonly checksService: SupportPackageChecksService,
   ) {}
 
-  async generate(packageId: number) {
+  async generate(packageId: number, requestedScope?: SupportPackageReportScope) {
+    const now = new Date()
+    const scope = validateSupportPackageReportScope(requestedScope, now)
     const snapshot = await this.packagesService.getReportSnapshot(packageId)
     const checks = await this.checksService.inspect(snapshot)
     if (checks.blocking) throw new BadRequestException({ message: 'Исправьте принадлежность отчётов проекту перед выгрузкой', issues: checks.issues })
-    const data = buildSupportPackageReportData(snapshot)
+    const data = buildSupportPackageReportData(snapshot, now, scope)
     const [logo, watermark] = await Promise.all([
       this.readBrandImage('logo.jpg'),
       this.readBrandImage('watermark.jpg'),
     ])
     const html = buildSupportPackageReportHtml(data, watermark || undefined)
     const buffer = await this.pdfService.generatePdf(html, logo)
-    return { buffer, filename: `support-package-${packageId}-${data.asOfDate}.pdf`, snapshot: {
+    const suffix = scope ? `${scope.dateFrom}-${scope.dateTo}` : data.asOfDate
+    return { buffer, filename: `support-package-${packageId}-${suffix}.pdf`, snapshot: {
       projectId: snapshot.projectId, projectTitle: data.projectTitle, clientName: data.clientName,
       packageId: data.packageId, purchasedHours: data.purchasedHours, spentHours: data.spentHours, remainingHours: data.remainingHours,
     } }

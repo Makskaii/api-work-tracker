@@ -1,8 +1,9 @@
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { In, Repository } from 'typeorm'
+import { ProjectBitrixService } from './project-bitrix.service'
 import { CreateReportProjectDto } from './dto/create-project-report-project.dto'
 import { ProjectReportsPlanQueryDto } from './dto/project-reports-plan-query.dto'
 import { UpdateReportProjectDto } from './dto/update-project-report-project.dto'
@@ -22,6 +23,7 @@ export class ProjectReportsService {
     private readonly stagesRepository: Repository<ProjectGanttStage>,
     @InjectRepository(ProjectGanttEvent)
     private readonly eventsRepository: Repository<ProjectGanttEvent>,
+    private readonly projectBitrixService: ProjectBitrixService,
   ) {}
 
   async findProjects(): Promise<ReportProject[]> {
@@ -149,12 +151,7 @@ export class ProjectReportsService {
   }
 
   createProject(dto: CreateReportProjectDto): Promise<ReportProject> {
-    const project = this.projectsRepository.create({
-      ...dto,
-      title: dto.title.trim(),
-    })
-
-    return this.projectsRepository.save(project)
+    return this.projectBitrixService.createProject(dto)
   }
 
   findProject(projectId: number): Promise<ReportProject> {
@@ -167,13 +164,42 @@ export class ProjectReportsService {
   ): Promise<ReportProject> {
     const project = await this.findProjectOrFail(projectId)
 
-    Object.assign(project, dto)
+    const changes = { ...dto }
+    const bitrixProjectId = this.projectBitrixService.optionalProjectId(
+      dto.bitrixProjectId !== undefined ? dto.bitrixProjectId : project.bitrixProjectId,
+    )
+    if (bitrixProjectId) {
+      const link = await this.projectBitrixService.resolveProjectLink(bitrixProjectId)
 
-    if (dto.title !== undefined) {
-      project.title = dto.title.trim()
+      Object.assign(changes, {
+        bitrixProjectId: link.bitrixProjectId,
+        clientCompanyId: link.clientCompanyId,
+        clientCompany: link.clientCompany,
+      })
+    } else if (dto.clientCompanyId != null && dto.clientCompanyId !== '') {
+      Object.assign(changes, await this.projectBitrixService.resolveCompany(dto.clientCompanyId))
+    } else if (dto.clientCompanyId !== undefined) {
+      changes.clientCompanyId = null
     }
-
-    return this.projectsRepository.save(project)
+    if (dto.title !== undefined) {
+      if (typeof dto.title !== 'string' || !dto.title.trim() || dto.title.trim().length > 255) {
+        throw new BadRequestException('Укажите название проекта длиной до 255 символов')
+      }
+      changes.title = dto.title.trim()
+    }
+    const saveChanges = async () => {
+      if (bitrixProjectId && bitrixProjectId !== project.bitrixProjectId) {
+        const duplicate = await this.projectsRepository.findOne({ where: { bitrixProjectId } })
+        if (duplicate && Number(duplicate.id) !== Number(project.id)) {
+          throw new ConflictException('Этот проект Битрикс24 уже связан с проектом Work Tracker')
+        }
+      }
+      Object.assign(project, changes)
+      return this.projectsRepository.save(project)
+    }
+    return bitrixProjectId && bitrixProjectId !== project.bitrixProjectId
+      ? this.projectBitrixService.withProjectLock(bitrixProjectId, saveChanges)
+      : saveChanges()
   }
 
   async deleteProject(projectId: number): Promise<void> {

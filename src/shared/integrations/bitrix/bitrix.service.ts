@@ -18,6 +18,19 @@ import {
 import { ReportProps } from 'src/types/reports'
 import { AnyObject } from 'src/types/types'
 
+const CREATE_REJECTION_CODES = new Set([
+  'NOT_FOUND', 'ACCESS_DENIED', 'allowed_only_intranet_user',
+  'CRM_FIELD_ERROR_VALUE_NOT_VALID', '100', 'CREATE_DYNAMIC_ITEM_RESTRICTED',
+  'NO_AUTH_FOUND', 'INVALID_REQUEST', 'INVALID_CREDENTIALS', 'ERROR_METHOD_NOT_FOUND',
+  'insufficient_scope', 'expired_token', 'user_access_error', 'PORTAL_DELETED',
+])
+
+/** A documented validation/auth rejection means CRM did not create an item. */
+export class BitrixItemCreateRejectedException extends BadGatewayException {
+  constructor() {
+    super('Битрикс24 отклонил создание элемента. Проверьте обязательные поля и права доступа')
+  }
+}
 @Injectable()
 export class BitrixService {
   constructor(private readonly httpService: HttpService) {}
@@ -89,7 +102,10 @@ export class BitrixService {
       )
 
       if (response.data?.error) {
-        throw new BadGatewayException(response.data.error_description)
+        if (CREATE_REJECTION_CODES.has(String(response.data.error))) {
+          throw new BitrixItemCreateRejectedException()
+        }
+        throw new BadGatewayException('Не удалось подтвердить создание элемента в Битрикс24')
       }
 
       const item = response.data?.result?.item
@@ -100,7 +116,12 @@ export class BitrixService {
 
       return item
     } catch (error) {
-      throw new BadGatewayException(this.getBitrixErrorMessage(error))
+      if (error instanceof BitrixItemCreateRejectedException) throw error
+      const rejection = error as { response?: { data?: { error?: unknown } } }
+      if (CREATE_REJECTION_CODES.has(String(rejection?.response?.data?.error))) {
+        throw new BitrixItemCreateRejectedException()
+      }
+      throw new BadGatewayException('Не удалось подтвердить создание элемента в Битрикс24. Повторите сохранение позже')
     }
   }
 

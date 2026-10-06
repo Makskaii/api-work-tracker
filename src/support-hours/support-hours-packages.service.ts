@@ -1,3 +1,4 @@
+import { withBitrixProjectLocks } from '../project-reports/project-bitrix-lock'
 import { synchronizeSupportProjectCatalogue } from './support-hours-project-catalogue'
 import { SupportHoursPackageImpactService } from './support-hours-package-impact.service'
 import { BadGatewayException, BadRequestException, ConflictException, HttpException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common'
@@ -762,19 +763,26 @@ export class SupportHoursPackagesService {
     const bitrixProjectId = String(bitrixProject.id)
     const existing = await this.projectsRepository.findOne({ where: { bitrixProjectId } })
     const title = bitrixProject.title?.trim() || existing?.title || `Проект ${bitrixProjectId}`
-    if (existing) {
-      if (existing.title !== title || existing.projectType !== ReportProjectType.Support) {
-        existing.title = title
-        existing.projectType = ReportProjectType.Support
-        return this.projectsRepository.save(existing)
+    // A current row needs no mutation. Every path which can write or create a row
+    // takes the same lock as manual creation and re-reads after obtaining it.
+    if (existing?.title === title && existing.projectType === ReportProjectType.Support) return existing
+    return await withBitrixProjectLocks(this.dataSource, [bitrixProjectId], async (manager) => {
+      const repository = manager.getRepository(ReportProject)
+      const current = await repository.findOne({ where: { bitrixProjectId } })
+      const currentTitle = bitrixProject.title?.trim() || current?.title || `Проект ${bitrixProjectId}`
+      if (current) {
+        if (current.title !== currentTitle || current.projectType !== ReportProjectType.Support) {
+          await repository.update({ id: current.id }, {
+            title: currentTitle, projectType: ReportProjectType.Support,
+          })
+          return { ...current, title: currentTitle, projectType: ReportProjectType.Support }
+        }
+        return current
       }
-      return existing
-    }
-    return this.projectsRepository.save(this.projectsRepository.create({
-      bitrixProjectId,
-      title,
-      projectType: ReportProjectType.Support,
-    }))
+      return repository.save(repository.create({
+        bitrixProjectId, title: currentTitle, projectType: ReportProjectType.Support,
+      }))
+    })
   }
 
   private async reallocateProjectInTransaction(manager: EntityManager, projectId: number): Promise<void> {

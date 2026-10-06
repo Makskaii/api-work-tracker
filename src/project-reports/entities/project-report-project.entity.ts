@@ -1,4 +1,4 @@
-﻿import {
+import {
   Column,
   CreateDateColumn,
   Entity,
@@ -25,7 +25,14 @@ export enum ReportProjectStatus {
 
 @Entity('project_report_projects')
 @Index('idx_project_report_projects_project_type', ['projectType'])
+@Index('uq_project_report_projects_creation_request', ['creationRequestId'], { unique: true })
 export class ReportProject {
+  @Column({ name: 'client_company_id', type: 'varchar', length: 64, nullable: true })
+  clientCompanyId!: string | null
+
+  @Column({ name: 'creation_request_id', type: 'varchar', length: 36, nullable: true })
+  creationRequestId!: string | null
+
   @PrimaryGeneratedColumn({ type: 'bigint', unsigned: true })
   id!: number
 

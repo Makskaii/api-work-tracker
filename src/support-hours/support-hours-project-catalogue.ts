@@ -3,6 +3,7 @@ import type { DataSource, Repository } from 'typeorm'
 import { EntityTypeIds, FinancialProjectType, ProjectCodes } from '../constants/const'
 import { ReportProject, ReportProjectType } from '../project-reports/entities/project-report-project.entity'
 import type { BitrixService } from '../shared/integrations/bitrix/bitrix.service'
+import { withBitrixProjectLocks } from '../project-reports/project-bitrix-lock'
 
 const PROJECT_SELECT = ['id', 'title', ProjectCodes.financialProjectType]
 const RECHECK_BATCH_SIZE = 50
@@ -88,7 +89,8 @@ export async function synchronizeSupportProjectCatalogue(
   }
 
   // Every external page and required field is validated before the first write.
-  return await dataSource.transaction(async (manager) => {
+  if (!observed.size) return { created: 0, updated: 0 }
+  return await withBitrixProjectLocks(dataSource, [...observed.keys()], async (manager) => {
     const repository = manager.getRepository(ReportProject)
     let created = 0
     let updated = 0

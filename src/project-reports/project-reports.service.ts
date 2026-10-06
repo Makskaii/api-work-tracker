@@ -109,7 +109,11 @@ export class ProjectReportsService {
         left.id - right.id,
       )
       const projectEvents = eventsByProjectId.get(String(project.id)) ?? []
-      const planDates = projectEvents.flatMap((event) => [event.planStartDate, event.planEndDate].filter((date): date is string => Boolean(date)))
+      const planDates = [
+        ...projectEvents.flatMap((event) => [event.planStartDate, event.planEndDate]),
+        project.projectStartDate,
+        project.contractEndDate || project.summaryPlanCompletionDate,
+      ].filter((date): date is string => Boolean(date))
       const factDates = projectEvents.flatMap((event) => [event.factStartDate, event.factEndDate].filter((date): date is string => Boolean(date)))
       const planStartDate = planDates.length ? planDates.reduce((min, date) => date < min ? date : min) : null
       const planEndDate = planDates.length ? planDates.reduce((max, date) => date > max ? date : max) : null
@@ -125,6 +129,7 @@ export class ProjectReportsService {
         responsible: project.responsible,
         clientCompany: project.clientCompany,
         projectStartDate: project.projectStartDate,
+        contractEndDate: project.contractEndDate,
         deadline: project.deadline,
         summaryPlanCompletionDate: project.summaryPlanCompletionDate,
         stages: projectStages.map((stage) => ({

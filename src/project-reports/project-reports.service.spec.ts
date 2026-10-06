@@ -6,9 +6,9 @@ const projects = [
   { id: 2, title: 'Empty', projectStatus: ReportProjectStatus.NotStarted, clientCompany: 'Other', responsible: 'Bob', bitrixProjectId: null, projectStartDate: null, deadline: null, summaryPlanCompletionDate: null },
 ]
 
-const makeService = (stages: unknown[], events: unknown[]) =>
+const makeService = (stages: unknown[], events: unknown[], reportProjects: unknown[] = projects) =>
   new ProjectReportsService(
-    { find: jest.fn().mockResolvedValue(projects) } as never,
+    { find: jest.fn().mockResolvedValue(reportProjects) } as never,
     {} as never,
     {
       find: jest.fn().mockImplementation(({ where }) =>
@@ -50,5 +50,22 @@ describe('ProjectReportsService.findProjectsPlan', () => {
   it('returns projects without stages when no period filter is provided', async () => {
     const result = await makeService([], []).findProjectsPlan({})
     expect(result.find((project) => project.id === 2)).toEqual(expect.objectContaining({ stages: [], planStartDate: null, planEndDate: null }))
+  })
+
+  it('returns and filters the saved contractual end date even when the project has no Gantt stages', async () => {
+    const project = { ...projects[0], projectStartDate: '2026-10-01', contractEndDate: '2026-12-31', summaryPlanCompletionDate: '2026-11-01', summaryFactCompletionDate: '2027-01-05' }
+    const service = makeService([], [], [project])
+    expect(await service.findProjectsPlan({ from: '2026-12-01', to: '2026-12-31' })).toEqual([
+      expect.objectContaining({ contractEndDate: '2026-12-31', planStartDate: '2026-10-01', planEndDate: '2026-12-31' }),
+    ])
+    expect(await service.findProjectsPlan({ from: '2027-01-01' })).toEqual([])
+  })
+
+  it('retains a legitimate legacy planned end as fallback without using actual completion', async () => {
+    const project = { ...projects[0], contractEndDate: null, summaryPlanCompletionDate: '2026-12-01', summaryFactCompletionDate: '2027-01-05' }
+    expect(await makeService([], [], [project]).findProjectsPlan({})).toEqual([
+      expect.objectContaining({ contractEndDate: null, planEndDate: '2026-12-01' }),
+    ])
+    expect(await makeService([], [], [{ ...project, summaryPlanCompletionDate: null }]).findProjectsPlan({ from: '2026-10-01' })).toEqual([])
   })
 })

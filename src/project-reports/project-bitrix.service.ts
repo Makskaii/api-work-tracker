@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common'
 import { DataSource, type QueryRunner } from 'typeorm'
 import { EntityTypeIds, FinancialProjectType, ProjectCodes } from '../constants/const'
-import { BitrixItemCreateRejectedException, BitrixService } from '../shared/integrations/bitrix/bitrix.service'
+import { BitrixCompanyCreateRejectedException, BitrixItemCreateRejectedException, BitrixService } from '../shared/integrations/bitrix/bitrix.service'
 import type { CreateReportProjectDto } from './dto/create-project-report-project.dto'
 import { ReportProject, ReportProjectType } from './entities/project-report-project.entity'
 import { bitrixProjectLockName } from './project-bitrix-lock'
@@ -20,8 +20,13 @@ type BitrixProject = {
   [ProjectCodes.company]?: unknown
 }
 
-type BitrixCompany = { ID?: unknown; id?: unknown; TITLE?: unknown; title?: unknown }
+type BitrixCompany = {
+  ID?: unknown; id?: unknown; TITLE?: unknown; title?: unknown
+  ORIGINATOR_ID?: unknown; ORIGIN_ID?: unknown
+}
 type CreationAttempt = { project_title: string; company_id: string }
+type CompanyCreationAttempt = { project_title: string; company_title: string; company_id: string | null }
+const COMPANY_ORIGINATOR_ID = 'work-tracker'
 
 export type ProjectCompanyLink = {
   bitrixProjectId: string
@@ -54,6 +59,10 @@ export class ProjectBitrixService {
   async resolveCompany(value: unknown): Promise<{ clientCompanyId: string; clientCompany: string }> {
     const clientCompanyId = this.positiveId(value, 'компании')
     const company = await this.bitrixService.getCompany<BitrixCompany>(Number(clientCompanyId))
+    return this.readCompany(clientCompanyId, company)
+  }
+
+  private readCompany(clientCompanyId: string, company: BitrixCompany | null): { clientCompanyId: string; clientCompany: string } {
     if (!company || typeof company !== 'object') {
       throw new NotFoundException('Компания не найдена в Битрикс24')
     }
@@ -99,6 +108,17 @@ export class ProjectBitrixService {
   async createProject(dto: CreateReportProjectDto): Promise<ReportProject> {
     const title = this.projectTitle(dto.title)
     const selectedProjectId = this.optionalProjectId(dto.bitrixProjectId)
+    const newCompanyTitle = dto.newCompanyTitle == null ? null : this.companyTitle(dto.newCompanyTitle)
+    const hasSelectedCompany = dto.clientCompanyId != null && dto.clientCompanyId !== ''
+    if (newCompanyTitle && (selectedProjectId || hasSelectedCompany)) {
+      throw new BadRequestException('Выберите существующую компанию или создайте новую для нового проекта')
+    }
+    if (!selectedProjectId) {
+      if (typeof dto.projectGoal !== 'string' || !dto.projectGoal.trim()) {
+        throw new BadRequestException('Укажите цель проекта')
+      }
+      if (!newCompanyTitle) this.positiveId(dto.clientCompanyId, 'компании')
+    }
     if (!selectedProjectId && !dto.creationRequestId) {
       throw new BadRequestException('Обновите страницу перед созданием нового проекта')
     }
@@ -113,13 +133,38 @@ export class ProjectBitrixService {
     await runner.connect()
     try {
       await this.acquireLock(runner, `work-tracker:project:${requestId}`, locks)
+      const companyAttempts: CompanyCreationAttempt[] = await runner.query(
+        'SELECT project_title, company_title, company_id FROM project_report_company_creation_requests WHERE request_id = ?',
+        [requestId],
+      )
+      const companyAttempt = companyAttempts[0]
+      const projectAttempts: CreationAttempt[] = await runner.query(
+        'SELECT project_title, company_id FROM project_report_creation_requests WHERE request_id = ?',
+        [requestId],
+      )
+      const previousAttempt = projectAttempts[0]
+      if (companyAttempt && (selectedProjectId || !newCompanyTitle || companyAttempt.project_title !== title ||
+        companyAttempt.company_title !== newCompanyTitle)) {
+        throw new ConflictException('Предыдущая попытка создания относится к другому проекту или компании')
+      }
+      if (previousAttempt && (selectedProjectId || (newCompanyTitle && !companyAttempt) || previousAttempt.project_title !== title ||
+        (!newCompanyTitle && previousAttempt.company_id !== this.positiveId(dto.clientCompanyId, 'компании')))) {
+        throw new ConflictException('Предыдущая попытка создания относится к другому проекту или компании')
+      }
       const repository = runner.manager.getRepository(ReportProject)
       const completed = await repository.findOne({ where: { creationRequestId: requestId } })
-      if (completed) return completed
+      if (completed) {
+        if (selectedProjectId ? completed.bitrixProjectId !== selectedProjectId
+          : !previousAttempt || (newCompanyTitle ? !companyAttempt || companyAttempt.company_id !== completed.clientCompanyId
+            : completed.clientCompanyId !== this.positiveId(dto.clientCompanyId, 'компании'))) {
+          throw new ConflictException('Этот запрос уже использован для другого проекта или компании')
+        }
+        return completed
+      }
 
       const link = selectedProjectId
         ? await this.resolveProjectLink(selectedProjectId)
-        : await this.createOrRecoverSmartProject(runner, dto, title, requestId, responsibleId)
+        : await this.createOrRecoverSmartProject(runner, dto, title, requestId, responsibleId, previousAttempt, newCompanyTitle, companyAttempt)
       await this.acquireLock(runner, bitrixProjectLockName(link.bitrixProjectId), locks)
       await runner.startTransaction('READ COMMITTED')
       const linkedProject = await repository.findOne({ where: { bitrixProjectId: link.bitrixProjectId } })
@@ -129,7 +174,8 @@ export class ProjectBitrixService {
       // A catalogue sync can discover the card between the CRM write and our save.
       // Reuse that local ID and retain any fields not supplied by this request.
       const project = linkedProject ?? repository.create()
-      Object.assign(project, dto, {
+      const { newCompanyTitle: _newCompanyTitle, ...projectData } = dto
+      Object.assign(project, projectData, {
         title: link.title,
         bitrixProjectId: link.bitrixProjectId,
         clientCompanyId: link.clientCompanyId,
@@ -159,16 +205,16 @@ export class ProjectBitrixService {
     title: string,
     requestId: string,
     responsibleId: string | null,
+    previousAttempt: CreationAttempt | undefined,
+    newCompanyTitle: string | null,
+    companyAttempt: CompanyCreationAttempt | undefined,
   ): Promise<ProjectCompanyLink> {
     if (typeof dto.projectGoal !== 'string' || !dto.projectGoal.trim()) {
       throw new BadRequestException('Укажите цель проекта')
     }
-    const company = await this.resolveCompany(dto.clientCompanyId)
-    const attempts: CreationAttempt[] = await runner.query(
-      'SELECT project_title, company_id FROM project_report_creation_requests WHERE request_id = ?',
-      [requestId],
-    )
-    const previousAttempt = attempts[0]
+    const company = newCompanyTitle
+      ? await this.createOrRecoverCompany(runner, title, newCompanyTitle, requestId, companyAttempt)
+      : await this.resolveCompany(dto.clientCompanyId)
     if (previousAttempt && (previousAttempt.project_title !== title || previousAttempt.company_id !== company.clientCompanyId)) {
       throw new ConflictException('Предыдущая попытка создания относится к другому проекту или компании')
     }
@@ -188,6 +234,12 @@ export class ProjectBitrixService {
       const link = await this.readProject(recovered[0])
       if (link.clientCompanyId !== company.clientCompanyId || link.title !== title) {
         throw new ConflictException('Созданная карточка изменена в Битрикс24. Выберите её из списка проектов')
+      }
+      if (!previousAttempt) {
+        await runner.query(
+          'INSERT INTO project_report_creation_requests (request_id, project_title, company_id) VALUES (?, ?, ?)',
+          [requestId, title, company.clientCompanyId],
+        )
       }
       return link
     }
@@ -228,6 +280,81 @@ export class ProjectBitrixService {
     return link
   }
 
+  private async createOrRecoverCompany(
+    runner: QueryRunner,
+    projectTitle: string,
+    companyTitle: string,
+    requestId: string,
+    previousAttempt: CompanyCreationAttempt | undefined,
+  ): Promise<{ clientCompanyId: string; clientCompany: string }> {
+    const originId = `project:${requestId}`
+    const recovered = await this.bitrixService.listAllCompanies<BitrixCompany>({
+      filter: { '=ORIGINATOR_ID': COMPANY_ORIGINATOR_ID, '=ORIGIN_ID': originId },
+      select: ['ID', 'TITLE', 'ORIGINATOR_ID', 'ORIGIN_ID'],
+    })
+    if (recovered.length > 1) {
+      throw new BadGatewayException('В Битрикс24 найдено несколько компаний для одной попытки создания')
+    }
+    if (recovered.length === 1) {
+      const item = recovered[0]
+      if (!item || typeof item !== 'object' || item.ORIGINATOR_ID !== COMPANY_ORIGINATOR_ID || item.ORIGIN_ID !== originId) {
+        throw new BadGatewayException('Не удалось проверить созданную компанию в Битрикс24')
+      }
+      const company = await this.resolveCreatedCompany(item.ID ?? item.id, companyTitle, originId)
+      if (previousAttempt?.company_id && previousAttempt.company_id !== company.clientCompanyId) {
+        throw new ConflictException('Созданная компания изменена в Битрикс24. Выберите её из списка компаний')
+      }
+      if (!previousAttempt) {
+        await runner.query(
+          'INSERT INTO project_report_company_creation_requests (request_id, project_title, company_title, company_id) VALUES (?, ?, ?, ?)',
+          [requestId, projectTitle, companyTitle, company.clientCompanyId],
+        )
+      } else {
+        await runner.query('UPDATE project_report_company_creation_requests SET company_id = ? WHERE request_id = ?',
+          [company.clientCompanyId, requestId])
+      }
+      return company
+    }
+    if (previousAttempt) {
+      // Even when a recorded ID is available, missing recovery markers must not
+      // silently create or attach another company after edits/deletion/timeouts.
+      throw new ConflictException('Создание компании ещё проверяется. Повторите сохранение позже или выберите существующую компанию')
+    }
+    await runner.query(
+      'INSERT INTO project_report_company_creation_requests (request_id, project_title, company_title, company_id) VALUES (?, ?, ?, ?)',
+      [requestId, projectTitle, companyTitle, null],
+    )
+    let companyId: number
+    try {
+      companyId = await this.bitrixService.addCompany({
+        TITLE: companyTitle, ORIGINATOR_ID: COMPANY_ORIGINATOR_ID, ORIGIN_ID: originId,
+      })
+    } catch (error) {
+      if (error instanceof BitrixCompanyCreateRejectedException) {
+        await runner.query('DELETE FROM project_report_company_creation_requests WHERE request_id = ?', [requestId])
+      }
+      throw error
+    }
+    // Persist the confirmed ID before starting project creation; never compensate
+    // a subsequent project/DB failure by deleting an actual CRM company.
+    await runner.query('UPDATE project_report_company_creation_requests SET company_id = ? WHERE request_id = ?',
+      [String(companyId), requestId])
+    return this.resolveCreatedCompany(companyId, companyTitle, originId)
+  }
+
+  private async resolveCreatedCompany(value: unknown, title: string, originId: string): Promise<{ clientCompanyId: string; clientCompany: string }> {
+    const clientCompanyId = this.positiveId(value, 'компании')
+    const item = await this.bitrixService.getCompany<BitrixCompany>(Number(clientCompanyId))
+    const company = this.readCompany(clientCompanyId, item)
+    if (item?.ORIGINATOR_ID !== COMPANY_ORIGINATOR_ID || item?.ORIGIN_ID !== originId) {
+      throw new BadGatewayException('Не удалось проверить созданную компанию в Битрикс24')
+    }
+    if (company.clientCompany !== title) {
+      throw new ConflictException('Созданная компания изменена в Битрикс24. Выберите её из списка компаний')
+    }
+    return company
+  }
+
   private async readProject(item: BitrixProject): Promise<ProjectCompanyLink> {
     if (!item || typeof item !== 'object') {
       throw new BadGatewayException('Битрикс24 вернул некорректный проект')
@@ -243,6 +370,13 @@ export class ProjectBitrixService {
   private projectTitle(value: unknown): string {
     if (typeof value !== 'string' || !value.trim() || value.trim().length > 255) {
       throw new BadRequestException('Укажите название проекта длиной до 255 символов')
+    }
+    return value.trim()
+  }
+
+  private companyTitle(value: unknown): string {
+    if (typeof value !== 'string' || !value.trim() || value.trim().length > 255) {
+      throw new BadRequestException('Укажите название компании длиной до 255 символов')
     }
     return value.trim()
   }

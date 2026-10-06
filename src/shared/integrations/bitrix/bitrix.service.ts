@@ -31,6 +31,12 @@ export class BitrixItemCreateRejectedException extends BadGatewayException {
     super('Битрикс24 отклонил создание элемента. Проверьте обязательные поля и права доступа')
   }
 }
+
+export class BitrixCompanyCreateRejectedException extends BadGatewayException {
+  constructor() {
+    super('Битрикс24 отклонил создание компании. Проверьте обязательные поля и права доступа')
+  }
+}
 @Injectable()
 export class BitrixService {
   constructor(private readonly httpService: HttpService) {}
@@ -253,6 +259,66 @@ export class BitrixService {
       return response.data?.result ?? null
     } catch (error) {
       throw new BadGatewayException(this.getBitrixErrorMessage(error))
+    }
+  }
+
+  async addCompany(fields: AnyObject): Promise<number> {
+    try {
+      const { data } = await firstValueFrom(this.httpService.post(Endpoints.companyAdd, {
+        fields,
+        params: { REGISTER_SONET_EVENT: 'N' },
+      }))
+      if (data && Object.hasOwn(data, 'error')) {
+        if (CREATE_REJECTION_CODES.has(String(data.error))) throw new BitrixCompanyCreateRejectedException()
+        throw new BadGatewayException('Не удалось подтвердить создание компании в Битрикс24')
+      }
+      const id = data?.result
+      if ((typeof id !== 'number' && typeof id !== 'string') || !/^\d+$/.test(String(id)) ||
+        !Number.isSafeInteger(Number(id)) || Number(id) <= 0) {
+        throw new BadGatewayException('Не удалось подтвердить создание компании в Битрикс24')
+      }
+      return Number(id)
+    } catch (error) {
+      if (error instanceof BitrixCompanyCreateRejectedException) throw error
+      const rejection = error as { response?: { data?: { error?: unknown } } }
+      if (CREATE_REJECTION_CODES.has(String(rejection?.response?.data?.error))) {
+        throw new BitrixCompanyCreateRejectedException()
+      }
+      throw new BadGatewayException('Не удалось подтвердить создание компании в Битрикс24. Повторите сохранение позже')
+    }
+  }
+
+  async listAllCompanies<T>(params: { filter: AnyObject; select: readonly string[] }): Promise<T[]> {
+    try {
+      const companies: T[] = []
+      let start = 0
+      for (let page = 0; page < 10_000; page++) {
+        const { data } = await firstValueFrom(this.httpService.post(Endpoints.companyList, {
+          ...params, order: { ID: 'ASC' }, start,
+        }))
+        if (!data || Object.hasOwn(data, 'error') || !Array.isArray(data.result)) {
+          throw new BadGatewayException('Битрикс24 вернул некорректный список компаний')
+        }
+        const items: T[] = data.result
+        companies.push(...items)
+        if (data.total != null && (!Number.isSafeInteger(Number(data.total)) || Number(data.total) < 0)) {
+          throw new BadGatewayException('Битрикс24 вернул некорректный размер списка компаний')
+        }
+        if (data.next == null) {
+          if (data.total != null && companies.length < Number(data.total)) {
+            throw new BadGatewayException('Битрикс24 вернул неполный список компаний')
+          }
+          return companies
+        }
+        const next = Number(data.next)
+        if (!Number.isSafeInteger(next) || next <= start || !items.length) {
+          throw new BadGatewayException('Битрикс24 вернул некорректную страницу компаний')
+        }
+        start = next
+      }
+      throw new BadGatewayException('Превышено количество страниц компаний Битрикс24')
+    } catch {
+      throw new BadGatewayException('Не удалось проверить создание компании в Битрикс24. Повторите сохранение позже')
     }
   }
 

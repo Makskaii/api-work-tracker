@@ -93,6 +93,8 @@ export const Endpoints = {
   lists: 'lists.element.get',
   item: 'crm.item.get',
   company: 'crm.company.get',
+  companyAdd: 'crm.company.add',
+  companyList: 'crm.company.list',
   department: 'department.get',
   calls: 'voximplant.statistic.get',
 }

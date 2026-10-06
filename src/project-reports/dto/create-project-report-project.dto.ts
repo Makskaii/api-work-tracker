@@ -1,11 +1,16 @@
 import { Type } from 'class-transformer'
-import { IsDateString, IsEnum, IsNumber, IsOptional, IsString, IsUUID, Matches, Min } from 'class-validator'
+import { IsDateString, IsEnum, IsNumber, IsOptional, IsString, IsUUID, Matches, MaxLength, Min } from 'class-validator'
 import {
   ReportProjectStatus,
   ReportProjectType,
 } from '../entities/project-report-project.entity'
 
 export class CreateReportProjectDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  newCompanyTitle?: string
+
   @IsOptional()
   @IsString()
   @Matches(/^[1-9]\d*$/)

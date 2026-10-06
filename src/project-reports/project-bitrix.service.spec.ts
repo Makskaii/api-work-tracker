@@ -1,6 +1,6 @@
 import { BadGatewayException, BadRequestException, ConflictException, NotFoundException } from '@nestjs/common'
 import { EntityTypeIds, FinancialProjectType, ProjectCodes } from '../constants/const'
-import { BitrixItemCreateRejectedException } from '../shared/integrations/bitrix/bitrix.service'
+import { BitrixCompanyCreateRejectedException, BitrixItemCreateRejectedException } from '../shared/integrations/bitrix/bitrix.service'
 import { ReportProject, ReportProjectType } from './entities/project-report-project.entity'
 import { ProjectBitrixService } from './project-bitrix.service'
 
@@ -18,6 +18,7 @@ const createDto = {
 function makeEnvironment() {
   const stored: ReportProject[] = []
   const attempts = new Map<string, { project_title: string; company_id: string }>()
+  const companyAttempts = new Map<string, { project_title: string; company_title: string; company_id: string | null }>()
   const repository = {
     create: jest.fn(() => ({ files: [] }) as unknown as ReportProject),
     findOne: jest.fn(({ where }: { where: Partial<ReportProject> }) => Promise.resolve(
@@ -36,29 +37,45 @@ function makeEnvironment() {
     startTransaction: jest.fn(() => { runner.isTransactionActive = true; return Promise.resolve() }),
     commitTransaction: jest.fn(() => { runner.isTransactionActive = false; return Promise.resolve() }),
     rollbackTransaction: jest.fn(() => { runner.isTransactionActive = false; return Promise.resolve() }),
-    query: jest.fn((sql: string, parameters: string[]) => {
+    query: jest.fn((sql: string, parameters: Array<string | null>) => {
       if (sql.includes('GET_LOCK')) return Promise.resolve([{ acquired: 1 }])
       if (sql.includes('RELEASE_LOCK')) return Promise.resolve([{ released: 1 }])
-      if (sql.startsWith('SELECT project_title')) return Promise.resolve(attempts.has(parameters[0]) ? [attempts.get(parameters[0])] : [])
+      if (sql.startsWith('SELECT project_title, company_title')) return Promise.resolve(companyAttempts.has(String(parameters[0])) ? [companyAttempts.get(String(parameters[0]))] : [])
+      if (sql.startsWith('SELECT project_title')) return Promise.resolve(attempts.has(String(parameters[0])) ? [attempts.get(String(parameters[0]))] : [])
+      if (sql.startsWith('INSERT INTO project_report_company_creation_requests')) {
+        companyAttempts.set(String(parameters[0]), { project_title: String(parameters[1]), company_title: String(parameters[2]), company_id: parameters[3] })
+        return Promise.resolve([])
+      }
+      if (sql.startsWith('UPDATE project_report_company_creation_requests')) {
+        const attempt = companyAttempts.get(String(parameters[1]))
+        if (attempt) attempt.company_id = parameters[0]
+        return Promise.resolve([])
+      }
+      if (sql.startsWith('DELETE FROM project_report_company_creation_requests')) {
+        companyAttempts.delete(String(parameters[0]))
+        return Promise.resolve([])
+      }
       if (sql.startsWith('INSERT INTO project_report_creation_requests')) {
-        attempts.set(parameters[0], { project_title: parameters[1], company_id: parameters[2] })
+        attempts.set(String(parameters[0]), { project_title: String(parameters[1]), company_id: String(parameters[2]) })
         return Promise.resolve([])
       }
       if (sql.startsWith('DELETE FROM project_report_creation_requests')) {
-        attempts.delete(parameters[0])
+        attempts.delete(String(parameters[0]))
         return Promise.resolve([])
       }
       return Promise.reject(new Error('Unexpected database query'))
     }),
   }
   const bitrix = {
-    getCompany: jest.fn().mockResolvedValue({ ID: '215', TITLE: 'Acme' }),
+    getCompany: jest.fn().mockResolvedValue({ ID: '215', TITLE: 'Acme', ORIGINATOR_ID: 'work-tracker', ORIGIN_ID: `project:${REQUEST_ID}` }),
     getItem: jest.fn().mockResolvedValue(sourceProject),
     listAllItems: jest.fn().mockResolvedValue([]),
     addItem: jest.fn().mockResolvedValue(sourceProject),
+    addCompany: jest.fn().mockResolvedValue(215),
+    listAllCompanies: jest.fn().mockResolvedValue([]),
   }
   const dataSource = { createQueryRunner: jest.fn(() => runner) }
-  return { service: new ProjectBitrixService(bitrix as never, dataSource as never), repository, runner, bitrix, attempts, stored, dataSource }
+  return { service: new ProjectBitrixService(bitrix as never, dataSource as never), repository, runner, bitrix, attempts, companyAttempts, stored, dataSource }
 }
 
 describe('ProjectBitrixService.createProject', () => {
@@ -232,6 +249,233 @@ describe('ProjectBitrixService.createProject', () => {
     const env = makeEnvironment()
     env.runner.query.mockResolvedValue([{ acquired: 0 }])
     await expect(env.service.createProject(createDto)).rejects.toBeInstanceOf(ConflictException)
+    expect(env.bitrix.addItem).not.toHaveBeenCalled()
+    expect(env.runner.release).toHaveBeenCalled()
+  })
+})
+
+const newCompanyDto = { ...createDto, clientCompanyId: null, clientCompany: null, newCompanyTitle: '  Acme  ' }
+const recoveredCompany = { ID: '215', TITLE: 'Acme', ORIGINATOR_ID: 'work-tracker', ORIGIN_ID: `project:${REQUEST_ID}` }
+
+describe('ProjectBitrixService company creation', () => {
+  it('creates the selected new company before its project and excludes creation-only input from the response', async () => {
+    const env = makeEnvironment()
+    const project = await env.service.createProject(newCompanyDto)
+    expect(env.bitrix.addCompany).toHaveBeenCalledWith({ TITLE: 'Acme', ORIGINATOR_ID: 'work-tracker', ORIGIN_ID: `project:${REQUEST_ID}` })
+    expect(env.bitrix.listAllCompanies).toHaveBeenCalledWith({
+      filter: { '=ORIGINATOR_ID': 'work-tracker', '=ORIGIN_ID': `project:${REQUEST_ID}` },
+      select: ['ID', 'TITLE', 'ORIGINATOR_ID', 'ORIGIN_ID'],
+    })
+    expect(env.bitrix.addCompany.mock.invocationCallOrder[0]).toBeLessThan(env.bitrix.addItem.mock.invocationCallOrder[0])
+    const reservation = env.runner.query.mock.calls.findIndex(([sql]) => sql.startsWith('INSERT INTO project_report_company'))
+    expect(env.runner.query.mock.invocationCallOrder[reservation]).toBeLessThan(env.bitrix.addCompany.mock.invocationCallOrder[0])
+    expect(project).toMatchObject({ clientCompanyId: '215', clientCompany: 'Acme', bitrixProjectId: '901' })
+    expect(project).not.toHaveProperty('newCompanyTitle')
+    expect(env.companyAttempts.get(REQUEST_ID)?.company_id).toBe('215')
+  })
+
+  it.each([
+    { clientCompanyId: '215' }, { bitrixProjectId: '901' }, { newCompanyTitle: '' },
+    { newCompanyTitle: ' ' }, { newCompanyTitle: 'x'.repeat(256) }, { projectGoal: ' ' },
+    { responsibleId: 'wrong' },
+  ])('rejects invalid company choice or project input before CRM side effects: %j', async (change) => {
+    const env = makeEnvironment()
+    await expect(env.service.createProject({ ...newCompanyDto, ...change })).rejects.toBeInstanceOf(BadRequestException)
+    expect(env.bitrix.addCompany).not.toHaveBeenCalled()
+    expect(env.bitrix.addItem).not.toHaveBeenCalled()
+  })
+
+  it('never creates a company in existing-company mode', async () => {
+    const env = makeEnvironment()
+    await env.service.createProject(createDto)
+    expect(env.bitrix.addCompany).not.toHaveBeenCalled()
+    expect(env.bitrix.listAllCompanies).not.toHaveBeenCalled()
+    expect(env.companyAttempts.size).toBe(0)
+  })
+
+  it('recovers a lost company reply after process restart using durable markers', async () => {
+    const env = makeEnvironment()
+    env.bitrix.addCompany.mockRejectedValueOnce(new BadGatewayException('Transport timeout'))
+    await expect(env.service.createProject(newCompanyDto)).rejects.toBeInstanceOf(BadGatewayException)
+    expect(env.companyAttempts.get(REQUEST_ID)?.company_id).toBeNull()
+    expect(env.bitrix.addItem).not.toHaveBeenCalled()
+    env.bitrix.listAllCompanies.mockResolvedValue([recoveredCompany])
+    const restarted = new ProjectBitrixService(env.bitrix as never, env.dataSource as never)
+    await expect(restarted.createProject(newCompanyDto)).resolves.toMatchObject({ clientCompanyId: '215' })
+    expect(env.bitrix.addCompany).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps an uncertain company attempt and refuses a duplicate add while recovery is empty', async () => {
+    const env = makeEnvironment()
+    env.bitrix.addCompany.mockRejectedValueOnce(new BadGatewayException('Transport timeout'))
+    await expect(env.service.createProject(newCompanyDto)).rejects.toBeInstanceOf(BadGatewayException)
+    await expect(env.service.createProject(newCompanyDto)).rejects.toBeInstanceOf(ConflictException)
+    expect(env.bitrix.addCompany).toHaveBeenCalledTimes(1)
+    expect(env.bitrix.addItem).not.toHaveBeenCalled()
+    expect(env.companyAttempts.size).toBe(1)
+  })
+
+  it('permits a retry after a documented company creation rejection', async () => {
+    const env = makeEnvironment()
+    env.bitrix.addCompany.mockRejectedValueOnce(new BitrixCompanyCreateRejectedException())
+    await expect(env.service.createProject(newCompanyDto)).rejects.toBeInstanceOf(BitrixCompanyCreateRejectedException)
+    expect(env.companyAttempts.size).toBe(0)
+    await expect(env.service.createProject(newCompanyDto)).resolves.toMatchObject({ clientCompanyId: '215' })
+    expect(env.bitrix.addCompany).toHaveBeenCalledTimes(2)
+  })
+
+  it('retains the created company after a definitive project rejection and reuses it on corrected retry', async () => {
+    const env = makeEnvironment()
+    env.bitrix.addItem.mockRejectedValueOnce(new BitrixItemCreateRejectedException())
+    await expect(env.service.createProject(newCompanyDto)).rejects.toBeInstanceOf(BitrixItemCreateRejectedException)
+    expect(env.companyAttempts.get(REQUEST_ID)?.company_id).toBe('215')
+    expect(env.attempts.size).toBe(0)
+    env.bitrix.listAllCompanies.mockResolvedValue([recoveredCompany])
+    await expect(env.service.createProject({ ...newCompanyDto, projectGoal: 'Corrected goal' })).resolves.toMatchObject({ clientCompanyId: '215' })
+    expect(env.bitrix.addCompany).toHaveBeenCalledTimes(1)
+    expect(env.bitrix.addItem).toHaveBeenCalledTimes(2)
+  })
+
+  it('retains company and project journals on local save failure and recovers without a second remote add', async () => {
+    const env = makeEnvironment()
+    env.repository.save.mockRejectedValueOnce(new Error('Database unavailable'))
+    await expect(env.service.createProject(newCompanyDto)).rejects.toThrow('Database unavailable')
+    env.bitrix.listAllCompanies.mockResolvedValue([recoveredCompany])
+    env.bitrix.listAllItems.mockResolvedValue([sourceProject])
+    await expect(env.service.createProject(newCompanyDto)).resolves.toMatchObject({ clientCompanyId: '215' })
+    expect(env.bitrix.addCompany).toHaveBeenCalledTimes(1)
+    expect(env.bitrix.addItem).toHaveBeenCalledTimes(1)
+  })
+
+  it('journals a valid recovered project even when its original local journal is missing, so identical retries remain idempotent', async () => {
+    const env = makeEnvironment()
+    env.bitrix.listAllItems.mockResolvedValue([sourceProject])
+    const first = await env.service.createProject(createDto)
+    const repeated = await env.service.createProject(createDto)
+    expect(first.id).toBe(repeated.id)
+    expect(env.attempts.get(REQUEST_ID)).toEqual({ project_title: 'New project', company_id: '215' })
+    expect(env.bitrix.addItem).not.toHaveBeenCalled()
+    expect(env.bitrix.listAllItems).toHaveBeenCalledTimes(1)
+    expect(env.stored).toHaveLength(1)
+  })
+
+  it('retains recovery protection if recording a confirmed company ID fails', async () => {
+    const env = makeEnvironment()
+    const normalQuery = env.runner.query.getMockImplementation()!
+    let failOnce = true
+    env.runner.query.mockImplementation((sql, parameters) => {
+      if (sql.startsWith('UPDATE project_report_company') && failOnce) {
+        failOnce = false
+        return Promise.reject(new Error('Journal unavailable'))
+      }
+      return normalQuery(sql, parameters)
+    })
+    await expect(env.service.createProject(newCompanyDto)).rejects.toThrow('Journal unavailable')
+    env.bitrix.listAllCompanies.mockResolvedValue([recoveredCompany])
+    await expect(env.service.createProject(newCompanyDto)).resolves.toMatchObject({ clientCompanyId: '215' })
+    expect(env.bitrix.addCompany).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { newCompanyTitle: 'Different' }, { title: 'Another project' },
+    { newCompanyTitle: undefined, clientCompanyId: '215' },
+    { newCompanyTitle: undefined, bitrixProjectId: '901' },
+  ])('rejects changing a durable request after an uncertain company result: %j', async (change) => {
+    const env = makeEnvironment()
+    env.bitrix.addCompany.mockRejectedValueOnce(new BadGatewayException('Transport timeout'))
+    await expect(env.service.createProject(newCompanyDto)).rejects.toBeInstanceOf(BadGatewayException)
+    await expect(env.service.createProject({ ...newCompanyDto, ...change })).rejects.toBeInstanceOf(ConflictException)
+    expect(env.bitrix.addCompany).toHaveBeenCalledTimes(1)
+    expect(env.bitrix.addItem).not.toHaveBeenCalled()
+  })
+
+  it('rejects changing an existing-company attempt into company creation', async () => {
+    const env = makeEnvironment()
+    env.bitrix.addItem.mockRejectedValueOnce(new BadGatewayException('Transport timeout'))
+    await expect(env.service.createProject(createDto)).rejects.toBeInstanceOf(BadGatewayException)
+    await expect(env.service.createProject(newCompanyDto)).rejects.toBeInstanceOf(ConflictException)
+    expect(env.bitrix.addCompany).not.toHaveBeenCalled()
+  })
+
+  it('validates company choice even on the completed-request shortcut', async () => {
+    const env = makeEnvironment()
+    await env.service.createProject(newCompanyDto)
+    await expect(env.service.createProject({ ...newCompanyDto, newCompanyTitle: 'Different' })).rejects.toBeInstanceOf(ConflictException)
+    await expect(env.service.createProject(createDto)).rejects.toBeInstanceOf(ConflictException)
+    await expect(env.service.createProject({ ...newCompanyDto, clientCompanyId: '215' })).rejects.toBeInstanceOf(BadRequestException)
+    await expect(env.service.createProject(newCompanyDto)).resolves.toMatchObject({ clientCompanyId: '215' })
+    expect(env.bitrix.addCompany).toHaveBeenCalledTimes(1)
+    expect(env.bitrix.listAllCompanies).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { items: [{ ...recoveredCompany, ORIGIN_ID: 'wrong' }] },
+    { items: [{ ...recoveredCompany, ORIGINATOR_ID: 'other' }] },
+    { items: [recoveredCompany, recoveredCompany] },
+    { items: [null] },
+  ])('rejects incorrect or duplicated recovery markers without creating a replacement', async ({ items }) => {
+    const env = makeEnvironment()
+    env.bitrix.listAllCompanies.mockResolvedValue(items)
+    await expect(env.service.createProject(newCompanyDto)).rejects.toBeInstanceOf(BadGatewayException)
+    expect(env.bitrix.addCompany).not.toHaveBeenCalled()
+    expect(env.bitrix.addItem).not.toHaveBeenCalled()
+  })
+
+  it('rejects a recovered company whose title was manually changed', async () => {
+    const env = makeEnvironment()
+    env.bitrix.listAllCompanies.mockResolvedValue([recoveredCompany])
+    env.bitrix.getCompany.mockResolvedValue({ ...recoveredCompany, TITLE: 'Changed' })
+    await expect(env.service.createProject(newCompanyDto)).rejects.toBeInstanceOf(ConflictException)
+    expect(env.bitrix.addCompany).not.toHaveBeenCalled()
+    expect(env.bitrix.addItem).not.toHaveBeenCalled()
+  })
+
+  it('refuses project creation when a fresh company response omitted its recovery markers', async () => {
+    const env = makeEnvironment()
+    env.bitrix.getCompany.mockResolvedValue({ ID: '215', TITLE: 'Acme' })
+    await expect(env.service.createProject(newCompanyDto)).rejects.toBeInstanceOf(BadGatewayException)
+    expect(env.companyAttempts.get(REQUEST_ID)?.company_id).toBe('215')
+    expect(env.bitrix.addCompany).toHaveBeenCalledTimes(1)
+    expect(env.bitrix.addItem).not.toHaveBeenCalled()
+  })
+
+  it('serializes overlapping requests while the first CRM company call is pending', async () => {
+    const env = makeEnvironment()
+    const query = env.runner.query.getMockImplementation()!
+    const held = new Set<string>()
+    env.runner.query.mockImplementation((sql, parameters) => {
+      const lock = String(parameters[0])
+      if (sql.includes('GET_LOCK')) {
+        if (held.has(lock)) return Promise.resolve([{ acquired: 0 }])
+        held.add(lock)
+        return Promise.resolve([{ acquired: 1 }])
+      }
+      if (sql.includes('RELEASE_LOCK')) held.delete(lock)
+      return query(sql, parameters)
+    })
+    let releaseCompany!: (id: number) => void
+    let signalCompanyStarted!: () => void
+    const started = new Promise<void>((resolve) => { signalCompanyStarted = resolve })
+    env.bitrix.addCompany.mockImplementationOnce(() => new Promise<number>((resolve) => {
+      releaseCompany = resolve
+      signalCompanyStarted()
+    }))
+    const first = env.service.createProject(newCompanyDto)
+    await started
+    await expect(env.service.createProject(newCompanyDto)).rejects.toBeInstanceOf(ConflictException)
+    releaseCompany(215)
+    await expect(first).resolves.toMatchObject({ clientCompanyId: '215' })
+    expect(env.bitrix.addCompany).toHaveBeenCalledTimes(1)
+    expect(env.bitrix.addItem).toHaveBeenCalledTimes(1)
+    expect(held.size).toBe(0)
+  })
+
+  it('holds the same request lock around company and project writes and rejects concurrent creation', async () => {
+    const env = makeEnvironment()
+    env.runner.query.mockResolvedValue([{ acquired: 0 }])
+    await expect(env.service.createProject(newCompanyDto)).rejects.toBeInstanceOf(ConflictException)
+    expect(env.runner.query).toHaveBeenCalledWith('SELECT GET_LOCK(?, 5) AS acquired', [`work-tracker:project:${REQUEST_ID}`])
+    expect(env.bitrix.addCompany).not.toHaveBeenCalled()
     expect(env.bitrix.addItem).not.toHaveBeenCalled()
     expect(env.runner.release).toHaveBeenCalled()
   })

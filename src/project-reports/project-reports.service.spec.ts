@@ -16,6 +16,7 @@ const makeService = (stages: unknown[], events: unknown[]) =>
       ),
     } as never,
     { find: jest.fn().mockResolvedValue(events) } as never,
+    {} as never,
   )
 
 describe('ProjectReportsService.findProjectsPlan', () => {

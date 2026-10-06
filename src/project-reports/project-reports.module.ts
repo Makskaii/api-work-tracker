@@ -1,5 +1,7 @@
-﻿import { Module } from '@nestjs/common'
+import { Module } from '@nestjs/common'
 import { TypeOrmModule } from '@nestjs/typeorm'
+import { BitrixModule } from '../shared/integrations/bitrix/bitrix.module'
+import { ProjectBitrixService } from './project-bitrix.service'
 import { ProjectGanttEvent } from './entities/project-gantt-event.entity'
 import { ProjectGanttStage } from './entities/project-gantt-stage.entity'
 import { ProjectPayment } from './entities/project-payment.entity'
@@ -16,6 +18,7 @@ import { ProjectReportsService } from './project-reports.service'
 
 @Module({
   imports: [
+    BitrixModule,
     TypeOrmModule.forFeature([
       ReportProject,
       ProjectGanttStage,
@@ -28,6 +31,7 @@ import { ProjectReportsService } from './project-reports.service'
   ],
   controllers: [ProjectReportsController],
   providers: [
+    ProjectBitrixService,
     ProjectReportsService,
     ProjectReportFilesService,
     ProjectReportEntriesService,

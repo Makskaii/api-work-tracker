@@ -1,11 +1,20 @@
-﻿import { Type } from 'class-transformer'
-import { IsDateString, IsEnum, IsNumber, IsOptional, IsString, Min } from 'class-validator'
+import { Type } from 'class-transformer'
+import { IsDateString, IsEnum, IsNumber, IsOptional, IsString, IsUUID, Matches, Min } from 'class-validator'
 import {
   ReportProjectStatus,
   ReportProjectType,
 } from '../entities/project-report-project.entity'
 
 export class CreateReportProjectDto {
+  @IsOptional()
+  @IsString()
+  @Matches(/^[1-9]\d*$/)
+  clientCompanyId?: string | null
+
+  @IsOptional()
+  @IsUUID()
+  creationRequestId?: string
+
   @IsString()
   title!: string
 

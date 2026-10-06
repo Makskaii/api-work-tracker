@@ -1,6 +1,6 @@
 import { BadGatewayException, BadRequestException, UnauthorizedException } from '@nestjs/common'
 import { DailyReportCodes, EntityTypeIds } from '../constants/const'
-import { ReportProjectType } from '../project-reports/entities/project-report-project.entity'
+import { ReportProject, ReportProjectType } from '../project-reports/entities/project-report-project.entity'
 import { SupportHoursConsumption } from './entities/support-hours-consumption.entity'
 import { SupportHoursPackage } from './entities/support-hours-package.entity'
 import { SupportHoursReport } from './entities/support-hours-report.entity'
@@ -68,9 +68,15 @@ function fixture(initialReports = [cachedReport()]) {
   const projectsRepository = {
     findOne: jest.fn(({ where }) => Promise.resolve(projects.find((project) => project.bitrixProjectId === where.bitrixProjectId) ?? null)),
     create: jest.fn((value) => value), save: jest.fn((value) => Promise.resolve(value)),
+    update: jest.fn(({ id }: { id: number }, change: Record<string, unknown>) => {
+      const project = projects.find((item) => item.id === id)
+      if (project) Object.assign(project, change)
+      return Promise.resolve({ affected: project ? 1 : 0 })
+    }),
   }
   const manager = {
     getRepository(entity: unknown) {
+      if (entity === ReportProject) return projectsRepository
       if (entity === SupportHoursReport) return reportsRepository
       if (entity === SupportHoursPackage) return packagesRepository
       if (entity === SupportHoursConsumption) return consumptionsRepository
@@ -79,7 +85,18 @@ function fixture(initialReports = [cachedReport()]) {
       throw new Error('Unexpected repository')
     },
   }
+  const projectRunner = {
+    manager,
+    isTransactionActive: false,
+    connect: jest.fn().mockResolvedValue(undefined),
+    release: jest.fn().mockResolvedValue(undefined),
+    query: jest.fn((sql: string) => Promise.resolve(sql.includes('GET_LOCK') ? [{ acquired: 1 }] : [{ released: 1 }])),
+    startTransaction: jest.fn(() => { projectRunner.isTransactionActive = true; return Promise.resolve() }),
+    commitTransaction: jest.fn(() => { projectRunner.isTransactionActive = false; return Promise.resolve() }),
+    rollbackTransaction: jest.fn(() => { projectRunner.isTransactionActive = false; return Promise.resolve() }),
+  }
   const dataSource = {
+    createQueryRunner: jest.fn(() => projectRunner),
     getRepository: manager.getRepository,
     transaction: jest.fn(async (operation) => {
       const snapshot = structuredClone({ reports, consumptions })
@@ -174,8 +191,8 @@ describe('Support hours authoritative report reconciliation', () => {
         [SUPPORT_FLAG]: report.bitrixReportId === excludedId ? 'N' : 'Y',
       })))
     })
-    f.bitrix.getItem.mockImplementation(async ({ id }) => ({ id, title: `Project ${version}`, ufCrm20_1781683772: '410' }))
-    f.bitrix.getUsersByIds.mockImplementation(async () => [{ id: '3', title: `Person ${version}` }])
+    f.bitrix.getItem.mockImplementation(({ id }) => Promise.resolve({ id, title: `Project ${version}`, ufCrm20_1781683772: '410' }))
+    f.bitrix.getUsersByIds.mockImplementation(() => Promise.resolve([{ id: '3', title: `Person ${version}` }]))
     f.bitrix.getCompany.mockImplementation(async () => ({ TITLE: `Company ${version}` }))
     f.bitrix.getListElementTitle.mockImplementation(async () => `Activity ${version}`)
 

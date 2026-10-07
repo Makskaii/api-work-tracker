@@ -79,6 +79,64 @@ function makeEnvironment() {
 }
 
 describe('ProjectBitrixService.createProject', () => {
+  it.each([
+    { summaryPurchasedHours: -1 },
+    { summaryPurchasedHours: Number.POSITIVE_INFINITY },
+    { summaryPurchasedHours: Number.NaN },
+    { projectStartDate: '2026-10-10', contractEndDate: '2026-10-09' },
+    { contractEndDate: '2026-02-30' },
+    { projectStartDate: '' },
+  ])('rejects invalid local metadata before any database journal or remote call: %j', async (metadata) => {
+    const env = makeEnvironment()
+    await expect(env.service.createProject({ ...createDto, ...metadata })).rejects.toBeInstanceOf(BadRequestException)
+    expect(env.dataSource.createQueryRunner).not.toHaveBeenCalled()
+    expect(env.bitrix.getCompany).not.toHaveBeenCalled()
+    expect(env.bitrix.addCompany).not.toHaveBeenCalled()
+    expect(env.bitrix.getItem).not.toHaveBeenCalled()
+    expect(env.bitrix.addItem).not.toHaveBeenCalled()
+    expect(env.repository.save).not.toHaveBeenCalled()
+    expect(env.attempts.size).toBe(0)
+    expect(env.companyAttempts.size).toBe(0)
+  })
+
+  it.each([0, 12.5, null])('persists purchased hours %s and equal calendar dates, then returns the same values on retry', async (summaryPurchasedHours) => {
+    const env = makeEnvironment()
+    const dto = { ...createDto, summaryPurchasedHours, projectStartDate: '2026-10-10', contractEndDate: '2026-10-10' }
+    await expect(env.service.createProject(dto)).resolves.toMatchObject({ summaryPurchasedHours, projectStartDate: '2026-10-10', contractEndDate: '2026-10-10' })
+    await expect(env.service.createProject(dto)).resolves.toMatchObject({ summaryPurchasedHours, projectStartDate: '2026-10-10', contractEndDate: '2026-10-10' })
+    expect(env.repository.save).toHaveBeenCalledTimes(1)
+    expect(env.bitrix.addItem).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows correction after a rejected local date range without consuming the creation request', async () => {
+    const env = makeEnvironment()
+    await expect(env.service.createProject({ ...createDto, projectStartDate: '2026-10-10', contractEndDate: '2026-10-09' })).rejects.toBeInstanceOf(BadRequestException)
+    await expect(env.service.createProject({ ...createDto, projectStartDate: '2026-10-10', contractEndDate: '2026-10-11' })).resolves.toMatchObject({ contractEndDate: '2026-10-11' })
+    expect(env.bitrix.addItem).toHaveBeenCalledTimes(1)
+    expect(env.stored).toHaveLength(1)
+  })
+
+  it('recovers saved local hours and dates after a database error without duplicating the CRM card', async () => {
+    const env = makeEnvironment()
+    const dto = { ...createDto, summaryPurchasedHours: 12.5, projectStartDate: '2026-10-01', contractEndDate: '2026-12-01' }
+    env.repository.save.mockRejectedValueOnce(new Error('Database unavailable'))
+    await expect(env.service.createProject(dto)).rejects.toThrow('Database unavailable')
+    env.bitrix.listAllItems.mockResolvedValue([sourceProject])
+    await expect(env.service.createProject(dto)).resolves.toMatchObject({ summaryPurchasedHours: 12.5, projectStartDate: '2026-10-01', contractEndDate: '2026-12-01' })
+    expect(env.bitrix.addItem).toHaveBeenCalledTimes(1)
+    expect(env.stored).toHaveLength(1)
+  })
+
+  it('checks a supplied single date against a catalogue row before adopting it', async () => {
+    const env = makeEnvironment()
+    const project = { id: 9, bitrixProjectId: '901', projectStartDate: '2026-10-10', contractEndDate: '2026-11-01', creationRequestId: null } as ReportProject
+    env.stored.push(project)
+    await expect(env.service.createProject({ ...createDto, contractEndDate: '2026-10-09' })).rejects.toBeInstanceOf(BadRequestException)
+    expect(env.repository.save).not.toHaveBeenCalled()
+    expect(project.contractEndDate).toBe('2026-11-01')
+    expect(env.runner.rollbackTransaction).toHaveBeenCalledTimes(1)
+  })
+
   it('creates a smart-process project with company, goal, type and responsible, then saves its real link', async () => {
     const env = makeEnvironment()
     const project = await env.service.createProject(createDto)

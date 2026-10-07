@@ -11,6 +11,7 @@ import { ProjectReportEntry } from './entities/project-report-entry.entity'
 import { ProjectGanttEvent } from './entities/project-gantt-event.entity'
 import { ProjectGanttStage } from './entities/project-gantt-stage.entity'
 import { ReportProject } from './entities/project-report-project.entity'
+import { assertProjectMetadata } from './project-metadata-validation'
 
 @Injectable()
 export class ProjectReportsService {
@@ -168,6 +169,7 @@ export class ProjectReportsService {
     dto: UpdateReportProjectDto,
   ): Promise<ReportProject> {
     const project = await this.findProjectOrFail(projectId)
+    assertProjectMetadata(dto, project)
 
     const changes = { ...dto }
     const bitrixProjectId = this.projectBitrixService.optionalProjectId(

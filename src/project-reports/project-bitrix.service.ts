@@ -12,6 +12,7 @@ import { BitrixCompanyCreateRejectedException, BitrixItemCreateRejectedException
 import type { CreateReportProjectDto } from './dto/create-project-report-project.dto'
 import { ReportProject, ReportProjectType } from './entities/project-report-project.entity'
 import { bitrixProjectLockName } from './project-bitrix-lock'
+import { assertProjectMetadata } from './project-metadata-validation'
 
 type BitrixProject = {
   id?: unknown
@@ -106,6 +107,7 @@ export class ProjectBitrixService {
     }
   }
   async createProject(dto: CreateReportProjectDto): Promise<ReportProject> {
+    assertProjectMetadata(dto)
     const title = this.projectTitle(dto.title)
     const selectedProjectId = this.optionalProjectId(dto.bitrixProjectId)
     const newCompanyTitle = dto.newCompanyTitle == null ? null : this.companyTitle(dto.newCompanyTitle)
@@ -174,6 +176,7 @@ export class ProjectBitrixService {
       // A catalogue sync can discover the card between the CRM write and our save.
       // Reuse that local ID and retain any fields not supplied by this request.
       const project = linkedProject ?? repository.create()
+      assertProjectMetadata(dto, project)
       const { newCompanyTitle: _newCompanyTitle, ...projectData } = dto
       Object.assign(project, projectData, {
         title: link.title,

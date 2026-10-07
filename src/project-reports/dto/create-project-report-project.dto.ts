@@ -40,6 +40,7 @@ export class CreateReportProjectDto {
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
+  @Min(0)
   summaryPurchasedHours?: number | null
 
   @IsOptional()

@@ -17,6 +17,53 @@ function makeUpdateEnvironment(bitrixProjectId: string | null = '901') {
 }
 
 describe('ProjectReportsService.updateProject Bitrix linking', () => {
+  it.each([
+    { summaryPurchasedHours: -1 },
+    { summaryPurchasedHours: Number.NaN },
+    { summaryPurchasedHours: Number.POSITIVE_INFINITY },
+    { contractEndDate: '2026-10-09' },
+    { projectStartDate: '2026-12-02' },
+    { projectStartDate: '2026-10-15', contractEndDate: '2026-10-14' },
+    { contractEndDate: '2026-02-30' },
+    { projectStartDate: '' },
+  ])('rejects invalid merged local metadata before CRM requests or save: %j', async (metadata) => {
+    const env = makeUpdateEnvironment()
+    Object.assign(env.project, { projectStartDate: '2026-10-10', contractEndDate: '2026-12-01', summaryPurchasedHours: 20 })
+    await expect(env.service.updateProject(1, metadata)).rejects.toBeInstanceOf(BadRequestException)
+    expect(env.bitrix.resolveProjectLink).not.toHaveBeenCalled()
+    expect(env.bitrix.resolveCompany).not.toHaveBeenCalled()
+    expect(env.repository.save).not.toHaveBeenCalled()
+    expect(env.project).toMatchObject({ projectStartDate: '2026-10-10', contractEndDate: '2026-12-01', summaryPurchasedHours: 20 })
+  })
+
+  it.each([0, 12.5, null])('updates purchased hours to %s while retaining omitted dates', async (summaryPurchasedHours) => {
+    const env = makeUpdateEnvironment()
+    Object.assign(env.project, { projectStartDate: '2026-10-10', contractEndDate: '2026-12-01', summaryPurchasedHours: 20 })
+    await expect(env.service.updateProject(1, { summaryPurchasedHours })).resolves.toMatchObject({ summaryPurchasedHours, projectStartDate: '2026-10-10', contractEndDate: '2026-12-01' })
+    expect(env.repository.save).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { projectStartDate: '2026-09-01' },
+    { contractEndDate: '2026-12-15' },
+    { projectStartDate: '2026-12-01' },
+    { contractEndDate: '2026-10-10' },
+    { projectStartDate: null, contractEndDate: '2026-01-01' },
+    { projectStartDate: '2027-01-01', contractEndDate: null },
+    { projectStartDate: null, contractEndDate: null },
+  ])('validates changed dates with saved values and respects explicit clearing: %j', async (metadata) => {
+    const env = makeUpdateEnvironment()
+    Object.assign(env.project, { projectStartDate: '2026-10-10', contractEndDate: '2026-12-01', summaryPurchasedHours: 20 })
+    await expect(env.service.updateProject(1, metadata)).resolves.toMatchObject({ ...metadata, summaryPurchasedHours: 20 })
+    expect(env.repository.save).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps stored metadata on an unrelated edit instead of replacing omitted fields', async () => {
+    const env = makeUpdateEnvironment()
+    Object.assign(env.project, { projectStartDate: '2026-10-10', contractEndDate: '2026-12-01', summaryPurchasedHours: 20 })
+    await expect(env.service.updateProject(1, { title: 'Changed' })).resolves.toMatchObject({ title: 'Changed', projectStartDate: '2026-10-10', contractEndDate: '2026-12-01', summaryPurchasedHours: 20 })
+  })
+
   it('refreshes the authoritative company while preserving normal edits', async () => {
     const env = makeUpdateEnvironment()
     const result = await env.service.updateProject(1, { projectAmount: 100, title: '  Edited report  ', clientCompanyId: '999', clientCompany: 'Wrong' })

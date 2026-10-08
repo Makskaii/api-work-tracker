@@ -156,6 +156,7 @@ export class HttpLoggingInterceptor implements NestInterceptor {
     return [
       'authorization',
       'cookie',
+      'csrf',
       'password',
       'accesstoken',
       'access_token',

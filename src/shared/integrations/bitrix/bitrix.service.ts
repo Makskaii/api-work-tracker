@@ -41,6 +41,28 @@ export class BitrixCompanyCreateRejectedException extends BadGatewayException {
 export class BitrixService {
   constructor(private readonly httpService: HttpService) {}
 
+  /** Trusted server-side department hierarchy; never accepts a caller-supplied portal. */
+  async listDepartments(): Promise<Array<Record<string, unknown>>> {
+    const departments: Array<Record<string, unknown>> = []
+    let start = 0
+    try {
+      for (let page = 0; page < 1000; page++) {
+        const { data } = await firstValueFrom(this.httpService.get('department.get', { params: { start } }))
+        if (!data || data.error || !Array.isArray(data.result) || data.result.some((item: unknown) => !item || typeof item !== 'object' || Array.isArray(item))) {
+          throw new Error('Invalid departments')
+        }
+        departments.push(...data.result)
+        if (data.next == null) return departments
+        const next = Number(data.next)
+        if (!Number.isSafeInteger(next) || next <= start || !data.result.length) throw new Error('Invalid pagination')
+        start = next
+      }
+      throw new Error('Department pagination exceeded')
+    } catch {
+      throw new BadGatewayException('Не удалось проверить отделы и права сотрудников в Битрикс24')
+    }
+  }
+
   async listItems<T>({
     entityTypeId,
     filter,

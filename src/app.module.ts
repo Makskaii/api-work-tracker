@@ -5,6 +5,7 @@ import { TypeOrmModule } from '@nestjs/typeorm'
 import { AppController } from './app.controller'
 import { AppService } from './app.service'
 import { AuthModule } from './auth/auth.module'
+import { EmployeeAuthModule } from './employee-auth/employee-auth.module'
 import { ClientsModule } from './clients/clients.module'
 import { DocRecordsModule } from './doc-records/doc-records.module'
 import { EmployeeModule } from './employee/employee.module'
@@ -46,6 +47,7 @@ import { SupportHoursPackagesModule } from './support-hours/support-hours-packag
     UserSprintsModule,
     ClientsModule,
     AuthModule,
+    EmployeeAuthModule,
     SprintsModule,
     EmployeeModule,
     GanttModule,
@@ -57,5 +59,4 @@ import { SupportHoursPackagesModule } from './support-hours/support-hours-packag
   providers: [AppService],
 })
 export class AppModule {}
-
 

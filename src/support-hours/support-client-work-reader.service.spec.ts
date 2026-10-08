@@ -31,7 +31,7 @@ function setup() {
 }
 
 describe('Support client work history reader', () => {
-  it('reads both historical task links without TP, package or project restrictions and deduplicates reports', async () => {
+  it('reads the canonical task relation without TP, package or project restrictions and deduplicates reports', async () => {
     const { reader, listAllItems } = setup()
     const excludedFromSupport = report(1, {
       [DailyReportCodes.includeInPackage]: false,
@@ -39,14 +39,11 @@ describe('Support client work history reader', () => {
       [DailyReportCodes.parentproject]: 901,
       packageId: 999,
     })
-    const legacy = report(2, {
-      [DailyReportCodes.parentId]: undefined,
-      [DailyReportCodes.taskId]: '101',
+    const otherTask = report(2, {
+      [DailyReportCodes.parentId]: '101',
       [DailyReportCodes.includeInPackage]: false,
     })
-    listAllItems
-      .mockResolvedValueOnce([excludedFromSupport])
-      .mockResolvedValueOnce([excludedFromSupport, legacy])
+    listAllItems.mockResolvedValueOnce([excludedFromSupport, excludedFromSupport, otherTask])
 
     const result = await reader.read(['100', '100', '00101'], now)
 
@@ -55,12 +52,7 @@ describe('Support client work history reader', () => {
       filter: { [`@${DailyReportCodes.parentId}`]: ['100', '101'] },
       select: [...reportSelectFields],
     })
-    expect(listAllItems).toHaveBeenNthCalledWith(2, {
-      entityTypeId: EntityTypeIds.reports,
-      filter: { [`@${DailyReportCodes.taskId}`]: ['100', '101'] },
-      select: [...reportSelectFields],
-    })
-    expect(listAllItems).toHaveBeenCalledTimes(2)
+    expect(listAllItems).toHaveBeenCalledTimes(1)
     expect(result.map((item) => [item.taskId, item.row.id])).toEqual([
       ['100', '1'],
       ['101', '2'],
@@ -84,18 +76,41 @@ describe('Support client work history reader', () => {
     expect(await reader.read(['100'], now)).toEqual([])
   })
 
-  it.each([
-    [100, 900],
-    [900, 100],
-  ])('rejects an ambiguous report linking task %s and task %s', async (parentId, customId) => {
+  it('uses the canonical task even when a stale custom task field disagrees', async () => {
+    const { reader, listAllItems } = setup()
+    const source = report(1, { [DailyReportCodes.taskId]: 900 })
+    const before = structuredClone(source)
+    listAllItems.mockResolvedValueOnce([source])
+    expect(await reader.read(['100'], now)).toEqual([
+      { taskId: '100', row: { id: '1', date: '2026-10-01', hours: 2, description: 'Работа 1' } },
+    ])
+    expect(source).toEqual(before)
+  })
+
+  it.each([0, null, undefined])('does not reattach a standalone report whose canonical task was cleared to %s', async (parentId) => {
     const { reader, listAllItems } = setup()
     listAllItems.mockResolvedValueOnce([
-      report(1, {
-        [DailyReportCodes.parentId]: parentId,
-        [DailyReportCodes.taskId]: customId,
-      }),
+      report(1, { [DailyReportCodes.parentId]: parentId, [DailyReportCodes.taskId]: 100 }),
     ])
-    await expect(reader.read(['100'], now)).rejects.toThrow(BadGatewayException)
+    expect(await reader.read(['100'], now)).toEqual([])
+  })
+
+  it('excludes a foreign canonical task even when its custom task ID matches the client', async () => {
+    const { reader, listAllItems } = setup()
+    listAllItems.mockResolvedValueOnce([
+      report(1, { [DailyReportCodes.parentId]: 900, [DailyReportCodes.taskId]: 100 }),
+    ])
+    expect(await reader.read(['100'], now)).toEqual([])
+  })
+
+  it('follows reassignment to the new task without counting the report under the stale custom task', async () => {
+    const { reader, listAllItems } = setup()
+    listAllItems.mockResolvedValueOnce([
+      report(1, { [DailyReportCodes.parentId]: 101, [DailyReportCodes.taskId]: 100 }),
+    ])
+    expect(await reader.read(['100', '101'], now)).toEqual([
+      { taskId: '101', row: { id: '1', date: '2026-10-01', hours: 2, description: 'Работа 1' } },
+    ])
   })
 
   it('accepts the same task in both fields and preserves localized actual hours and zero-hour work', async () => {
@@ -189,22 +204,16 @@ describe('Support client work history reader', () => {
     expect(listAllItems).not.toHaveBeenCalled()
   })
 
-  it('reads long company task lists in batches of at most 50 IDs for both link fields', async () => {
+  it('reads long company task lists in batches of at most 50 canonical task IDs', async () => {
     const { reader, listAllItems } = setup()
     const ids = Array.from({ length: 51 }, (_, index) => String(100 + index))
     expect(await reader.read(ids, now)).toEqual([])
-    expect(listAllItems).toHaveBeenCalledTimes(4)
+    expect(listAllItems).toHaveBeenCalledTimes(2)
     expect(listAllItems.mock.calls[0][0].filter).toEqual({
       [`@${DailyReportCodes.parentId}`]: ids.slice(0, 50),
     })
     expect(listAllItems.mock.calls[1][0].filter).toEqual({
-      [`@${DailyReportCodes.taskId}`]: ids.slice(0, 50),
-    })
-    expect(listAllItems.mock.calls[2][0].filter).toEqual({
       [`@${DailyReportCodes.parentId}`]: ['150'],
-    })
-    expect(listAllItems.mock.calls[3][0].filter).toEqual({
-      [`@${DailyReportCodes.taskId}`]: ['150'],
     })
   })
 })

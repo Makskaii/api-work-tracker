@@ -31,7 +31,7 @@ const isCalendarDate = (value: unknown): value is string => typeof value === 'st
   && dayjs.utc(value).isValid()
   && dayjs.utc(value).format('YYYY-MM-DD') === value
 
-/** Undefined scope means the complete selected package; date bounds are inclusive. */
+/** Undefined scope means the complete client report; date bounds are inclusive. */
 export function validateSupportPackageReportScope(input?: unknown, now = new Date()): SupportPackageReportScope | undefined {
   if (input === undefined) return undefined
   if (input === null || typeof input !== 'object' || Array.isArray(input)) {

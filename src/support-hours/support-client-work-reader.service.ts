@@ -27,20 +27,15 @@ export class SupportClientWorkReaderService {
     const today = dayjs(now).tz('Europe/Moscow').format('YYYY-MM-DD')
     for (let offset = 0; offset < ids.length; offset += 50) {
       const batch = ids.slice(offset, offset + 50)
-      // Both relation fields exist in historical cards. Neither the TP flag nor a
-      // package allocation decides which cabinet task's descriptions are shown.
-      const results = await Promise.all([DailyReportCodes.parentId, DailyReportCodes.taskId].map((field) =>
-        this.bitrix.listAllItems<BitrixWork>({
-          entityTypeId: EntityTypeIds.reports, filter: { [`@${field}`]: batch }, select: [...reportSelectFields],
-        })))
-      for (const report of results.flat()) {
+      // Use the smart-process relation, as the report editor and cabinet do.
+      // Legacy custom task fields can remain stale after reassignment.
+      const results = await this.bitrix.listAllItems<BitrixWork>({
+        entityTypeId: EntityTypeIds.reports,
+        filter: { [`@${DailyReportCodes.parentId}`]: batch }, select: [...reportSelectFields],
+      })
+      for (const report of results) {
         const id = positiveId(report.id)
-        const parentId = positiveId(report[DailyReportCodes.parentId])
-        const customId = positiveId(report[DailyReportCodes.taskId])
-        if (parentId && customId && parentId !== customId && (allowed.has(parentId) || allowed.has(customId))) {
-          throw new BadGatewayException('У отчёта указаны разные задачи. Исправьте связь в Битрикс24 перед выгрузкой')
-        }
-        const taskId = parentId ?? customId
+        const taskId = positiveId(report[DailyReportCodes.parentId])
         if (!id || !taskId || !allowed.has(taskId)) continue
         const rawDate = report.begindate || report.createdTime
         if (typeof rawDate !== 'string' || !dayjs(rawDate).isValid()) continue

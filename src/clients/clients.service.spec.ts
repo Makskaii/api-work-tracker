@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common'
 import { getRepositoryToken } from '@nestjs/typeorm'
 import { Test, TestingModule } from '@nestjs/testing'
@@ -15,6 +16,7 @@ import {
   ClientsCodes,
   DailyReportCodes,
   EntityTypeIds,
+  TASK_SELECT_FIELDS,
   TaskStageIds,
   TaskCodes,
 } from 'src/constants/const'
@@ -104,6 +106,87 @@ describe('ClientsService', () => {
     expect(service).toBeDefined()
   })
 
+  it('reads the exact cabinet task list and completed metrics without changing public responses or stored hours', async () => {
+    clientsRepository.findOne.mockResolvedValue({ ...client, purchasedHours: '65' })
+    const completedTasks = [
+      { id: 101, title: 'Первая выполненная', stageId: TaskStageIds.done, [TaskCodes.hours]: '29', [TaskCodes.parentproject]: 24 },
+      { id: 102, title: 'Другая выполненная', stageId: TaskStageIds.done, [TaskCodes.hours]: '33', [TaskCodes.parentproject]: 99 },
+    ]
+    const tasks = [...completedTasks, ...Array.from({ length: 23 }, (_, index) => ({
+      id: index + 103, title: `Без отчётов ${index}`, stageId: TaskStageIds.inWork,
+      [TaskCodes.hours]: '5', [TaskCodes.parentproject]: index % 2 ? 24 : null,
+    }))]
+    const source = structuredClone(tasks)
+    bitrixService.listAllItems.mockImplementation(({ entityTypeId, filter }: { entityTypeId: number; filter: Record<string, unknown> }) => {
+      if (entityTypeId === EntityTypeIds.reports) return Promise.resolve([])
+      return Promise.resolve(filter.stageId === TaskStageIds.done ? completedTasks : tasks)
+    })
+    const now = new Date('2026-10-08T21:30:00Z')
+    const statsPeriod = { start: '2026-04-01', end: '2026-10-09T20:59:59.999Z' }
+    const presentation = await service.getCompanyReportPresentation(42, now)
+    expect(clientsRepository.findOne).toHaveBeenNthCalledWith(1, {
+      where: { crmClientId: 42, status: ClientStatus.Active },
+      select: { crmClientId: true, status: true, purchasedHours: true },
+    })
+    expect(bitrixService.listAllItems).toHaveBeenNthCalledWith(1, {
+      entityTypeId: EntityTypeIds.tasks,
+      filter: { [TaskCodes.company]: 42, '>=createdTime': '2026-04-01' },
+      select: CLIENT_TASK_SELECT_FIELDS,
+    })
+    expect(bitrixService.listAllItems).toHaveBeenNthCalledWith(2, {
+      entityTypeId: EntityTypeIds.tasks,
+      filter: { [TaskCodes.company]: 42, '>=createdTime': statsPeriod.start, '<=createdTime': statsPeriod.end, stageId: TaskStageIds.done },
+      select: TASK_SELECT_FIELDS,
+    })
+    const authClient = { sub: 1, email: 'client@example.com', crmClientId: 42, role: 'client' as const }
+    const cabinetTasks = await service.getMyTasks(authClient)
+    const cabinetStats = await service.getMyStats(authClient, statsPeriod)
+    expect(presentation).toEqual({
+      tasks: cabinetTasks, purchasedHours: cabinetStats.purchasedHours,
+      completedHours: cabinetStats.tasks.totalTime, completedTaskCount: cabinetStats.tasks.count,
+      completedTaskIds: ['101', '102'], statsPeriod,
+    })
+    expect(presentation.tasks).toHaveLength(25)
+    expect(presentation).toMatchObject({ purchasedHours: 65, completedHours: 62, completedTaskCount: 2 })
+    expect(cabinetStats).toEqual({
+      purchasedHours: 65, period: statsPeriod, tasks: { count: 2, totalTime: 62 },
+      communications: {
+        totalTime: 0, internal: { activityType: '402', count: 0, totalTime: 0 },
+        external: { activityType: '417', count: 0, totalTime: 0 },
+      },
+    })
+    expect(tasks).toEqual(source)
+    expect(clientsRepository.save).not.toHaveBeenCalled()
+    expect(dataSource.transaction).not.toHaveBeenCalled()
+    expect(bitrixService.addItem).not.toHaveBeenCalled()
+    expect(bitrixService.updateItem).not.toHaveBeenCalled()
+  })
+
+  it.each([null, { ...client, status: ClientStatus.Inactive }])('rejects a company without an active cabinet client (%s)', async (foundClient) => {
+    clientsRepository.findOne.mockResolvedValue(foundClient)
+    await expect(service.getCompanyReportPresentation(42, new Date('2026-10-08T09:00:00Z'))).rejects.toThrow(NotFoundException)
+    expect(bitrixService.listAllItems).not.toHaveBeenCalled()
+  })
+
+  it.each([[null, null], ['0', 0], ['2.25', 2.25]])('preserves purchased hours %s as %s without inventing a client budget', async (purchasedHours, expected) => {
+    clientsRepository.findOne.mockResolvedValue({ ...client, purchasedHours })
+    bitrixService.listAllItems.mockResolvedValue([])
+    const result = await service.getCompanyReportPresentation(42, new Date('2026-10-08T09:00:00Z'))
+    expect(result).toMatchObject({ tasks: [], purchasedHours: expected, completedHours: 0, completedTaskCount: 0, completedTaskIds: [] })
+  })
+
+  it.each([0, -1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1])('rejects invalid report company %s before reading client data', async (companyId) => {
+    await expect(service.getCompanyReportPresentation(companyId, new Date('2026-10-08T09:00:00Z'))).rejects.toThrow(BadRequestException)
+    expect(clientsRepository.findOne).not.toHaveBeenCalled()
+    expect(bitrixService.listAllItems).not.toHaveBeenCalled()
+  })
+
+  it('rejects an invalid report date before reading client data', async () => {
+    await expect(service.getCompanyReportPresentation(42, new Date('invalid'))).rejects.toThrow(BadRequestException)
+    expect(clientsRepository.findOne).not.toHaveBeenCalled()
+    expect(bitrixService.listAllItems).not.toHaveBeenCalled()
+  })
+
   it('loads current client tasks through server-side Bitrix integration', async () => {
     clientsRepository.findOne.mockResolvedValue(client)
     bitrixService.listAllItems.mockResolvedValue([
@@ -152,7 +235,7 @@ describe('ClientsService', () => {
     ])
   })
 
-  it('loads current client tasks by sprint period when dates are provided', async () => {
+  it('keeps the existing completed-task creation-period filter when dates are provided', async () => {
     clientsRepository.findOne.mockResolvedValue(client)
     bitrixService.listAllItems.mockResolvedValue([])
 
@@ -173,9 +256,10 @@ describe('ClientsService', () => {
       expect.objectContaining({
         entityTypeId: EntityTypeIds.tasks,
         filter: expect.objectContaining({
-          [TaskCodes.client]: 42,
-          [`>=${TaskCodes.sprintDateStart}`]: '2026-05-01',
-          [`<=${TaskCodes.sprintDateStart}`]: '2026-05-14',
+          [TaskCodes.company]: 42,
+          '>=createdTime': '2026-05-01',
+          '<=createdTime': '2026-05-14',
+          stageId: TaskStageIds.done,
         }),
       }),
     )

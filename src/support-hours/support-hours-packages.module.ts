@@ -19,10 +19,12 @@ import { SupportHoursPackagesService } from './support-hours-packages.service'
 import { SupportHoursConsumption } from './entities/support-hours-consumption.entity'
 import { SupportHoursPackage } from './entities/support-hours-package.entity'
 import { SupportHoursReport } from './entities/support-hours-report.entity'
+import { ClientsModule } from '../clients/clients.module'
+import { SupportClientWorkReaderService } from './support-client-work-reader.service'
 
 @Module({
-  imports: [BitrixModule, PdfModule, TypeOrmModule.forFeature([ReportProject, SupportHoursPackage, SupportHoursReport, SupportHoursConsumption, SupportHoursReportVersion, SupportHoursAssignment, SupportTaskAssignment, SupportHoursTransfer])],
+  imports: [BitrixModule, PdfModule, ClientsModule, TypeOrmModule.forFeature([ReportProject, SupportHoursPackage, SupportHoursReport, SupportHoursConsumption, SupportHoursReportVersion, SupportHoursAssignment, SupportTaskAssignment, SupportHoursTransfer])],
   controllers: [SupportHoursPackagesController],
-  providers: [SupportBitrixUserService, SupportHoursPackageImpactService, SupportReportEditorService, SupportPackageChecksService, SupportHoursReportVersionsService, SupportHoursPackagesService, SupportHoursPackagesScheduler, SupportHoursPackageReportService],
+  providers: [SupportBitrixUserService, SupportHoursPackageImpactService, SupportReportEditorService, SupportPackageChecksService, SupportHoursReportVersionsService, SupportHoursPackagesService, SupportHoursPackagesScheduler, SupportHoursPackageReportService, SupportClientWorkReaderService],
 })
 export class SupportHoursPackagesModule {}

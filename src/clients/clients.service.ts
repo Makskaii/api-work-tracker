@@ -8,6 +8,9 @@ import {
 } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { genSalt, hash } from 'bcryptjs'
+import dayjs from 'dayjs'
+import timezone from 'dayjs/plugin/timezone'
+import utc from 'dayjs/plugin/utc'
 import {
   CLIENT_TASK_APPROVAL_STAGE_IDS,
   CLIENT_TASK_BACKLOG_STAGE_IDS,
@@ -71,6 +74,18 @@ import {
   ClientPurchasedHoursEventType,
 } from './entities/client-purchased-hours-event.entity'
 
+
+dayjs.extend(utc)
+dayjs.extend(timezone)
+
+export interface CompanyReportPresentation {
+  tasks: ClientTaskResponseDto[]
+  purchasedHours: number | null
+  completedHours: number
+  completedTaskCount: number
+  completedTaskIds: string[]
+  statsPeriod: { start: string; end: string }
+}
 
 @Injectable()
 export class ClientsService {
@@ -360,6 +375,44 @@ export class ClientsService {
     })
 
     return tasks.map((task) => this.toClientTaskResponseDto(task))
+  }
+
+  /** Read the cabinet's company-wide presentation for internal document generation. */
+  async getCompanyReportPresentation(companyId: number, now: Date): Promise<CompanyReportPresentation> {
+    if (!Number.isSafeInteger(companyId) || companyId <= 0 || !Number.isFinite(now.getTime())) {
+      throw new BadRequestException('Некорректная компания или дата клиентского отчёта')
+    }
+    const client = await this.clientsRepository.findOne({
+      where: { crmClientId: companyId, status: ClientStatus.Active },
+      select: { crmClientId: true, status: true, purchasedHours: true },
+    })
+    if (!client || client.status !== ClientStatus.Active) {
+      throw new NotFoundException('Для компании не найден активный клиент кабинета')
+    }
+    const statsPeriod = {
+      start: '2026-04-01',
+      end: dayjs(now).tz('Europe/Moscow').endOf('day').toISOString(),
+    }
+    const [tasks, completedTasks] = await Promise.all([
+      this.bitrixService.listAllItems<ClientTaskBitrixItem>({
+        entityTypeId: EntityTypeIds.tasks,
+        filter: this.buildClientTasksFilter(client.crmClientId, {}),
+        select: CLIENT_TASK_SELECT_FIELDS,
+      }),
+      this.bitrixService.listAllItems<TaskProps>({
+        entityTypeId: EntityTypeIds.tasks,
+        filter: this.buildClientTasksFilter(client.crmClientId, statsPeriod),
+        select: TASK_SELECT_FIELDS,
+      }),
+    ])
+    return {
+      tasks: tasks.map((task) => this.toClientTaskResponseDto(task)),
+      purchasedHours: this.toNullableNumber(client.purchasedHours),
+      completedHours: this.sumTaskTime(completedTasks),
+      completedTaskCount: completedTasks.length,
+      completedTaskIds: completedTasks.map((task) => String(task.id)),
+      statsPeriod,
+    }
   }
 
   async createMyTaskProposal(

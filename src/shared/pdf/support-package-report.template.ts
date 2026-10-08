@@ -12,6 +12,8 @@ export type SupportPackageOtherReportRow = SupportPackageReportRow & {
 }
 
 export type SupportPackageReportData = {
+  reportBasis?: 'client_cabinet'
+  completedTaskCount?: number
   projectTitle: string
   clientName: string | null
   packageId: number
@@ -64,6 +66,7 @@ const taskStatus = (status: SupportPackageReportData['tasks'][number]['status'])
 /** Task presentation is separate from the package's actual charge summary. */
 export const buildSupportPackageReportHtml = (data: SupportPackageReportData, watermarkUrl?: string): string => {
   const hasPeriod = Boolean(data.dateFrom && data.dateTo)
+  const cabinet = data.reportBasis === 'client_cabinet'
   const tasksHtml = data.tasks.map((task, index) => {
     const completed = task.status === 'completed'
     const reports = task.clientReports ?? task.reports
@@ -80,7 +83,7 @@ export const buildSupportPackageReportHtml = (data: SupportPackageReportData, wa
     ? `<p class="report-period">Период отчёта: ${escapeHtml(dayjs(data.dateFrom).format('DD.MM.YYYY'))} - ${escapeHtml(dayjs(data.dateTo).format('DD.MM.YYYY'))}</p>`
     : ''
   const periodSpent = data.periodSpentHours !== undefined
-    ? `<p class="period-summary">Списано за выбранный период: <strong>${escapeHtml(hours(data.periodSpentHours))}</strong></p>`
+    ? `<p class="period-summary">${cabinet ? 'Объём выполненных задач, попавших в период' : 'Списано за выбранный период'}: <strong>${escapeHtml(hours(data.periodSpentHours))}</strong></p>`
     : ''
   // Only locally embedded artwork is allowed; report text cannot introduce remote resources.
   const watermark = watermarkUrl?.startsWith('data:image/')
@@ -91,7 +94,7 @@ export const buildSupportPackageReportHtml = (data: SupportPackageReportData, wa
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <title>Отчёт по пакету №${data.packageId} - ${escapeHtml(data.projectTitle)}</title>
+  <title>${cabinet ? `Отчёт по технической поддержке - ${escapeHtml(data.clientName || data.projectTitle)}` : `Отчёт по пакету №${data.packageId} - ${escapeHtml(data.projectTitle)}`}</title>
   <style>
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; background: #fff; color: #222; font-family: Arial, Helvetica, sans-serif; font-size: 12px; line-height: 1.45; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -135,17 +138,17 @@ export const buildSupportPackageReportHtml = (data: SupportPackageReportData, wa
 </head>
 <body>${watermark}<main>
   <p class="eyebrow">Техническая поддержка</p>
-  <h1>${hasPeriod ? 'Отчёт за период' : 'Отчёт по пакету часов'}</h1>
-  <p class="project-name">${escapeHtml(data.projectTitle)}</p>
-  ${data.clientName ? `<p class="client-name">${escapeHtml(data.clientName)}</p>` : ''}
-  <p class="report-meta">Пакет №${data.packageId}</p>
+  <h1>${hasPeriod ? 'Отчёт за период' : cabinet ? 'Отчёт по технической поддержке' : 'Отчёт по пакету часов'}</h1>
+  <p class="project-name">${escapeHtml(cabinet ? data.clientName || data.projectTitle : data.projectTitle)}</p>
+  ${!cabinet && data.clientName ? `<p class="client-name">${escapeHtml(data.clientName)}</p>` : ''}
+  <p class="report-meta">${cabinet ? `По состоянию на ${escapeHtml(dayjs(data.asOfDate).format('DD.MM.YYYY'))}` : `Пакет №${data.packageId}`}</p>
   ${period}${periodSpent}
-  <table class="summary-table"><thead><tr><th>Объём пакета</th><th>Списано из пакета</th><th>Осталось</th></tr></thead>
+  <table class="summary-table"><thead><tr><th>${cabinet ? 'Куплено часов' : 'Объём пакета'}</th><th>${cabinet ? 'Выполнено' : 'Списано из пакета'}</th><th>Осталось</th></tr></thead>
   <tbody><tr><td>${escapeHtml(hours(data.purchasedHours))}</td><td>${escapeHtml(hours(data.spentHours))}</td><td class="${data.remainingHours < 0 ? 'negative' : ''}">${escapeHtml(hours(data.remainingHours))}</td></tr></tbody></table>
-  <p class="scope-note">Объём задачи - согласованный объём работ. В сводке указаны фактические списания и остаток пакета${hasPeriod ? ' на конец выбранного периода' : ''}.</p>
-  ${tasksHtml ? `<h2>Задачи</h2>${tasksHtml}` : ''}
+  <p class="scope-note">${cabinet ? `Задачи и показатели соответствуют кабинету клиента. «Выполнено» - согласованный объём завершённых задач; задачи в процессе в этот итог не входят. Часы отдельных работ распределены пропорционально внутри объёма задачи.${hasPeriod ? ' В списке показаны задачи, по которым были работы в выбранном периоде, целиком. Сводка отражает общий текущий баланс.' : ''}` : `Объём задачи - согласованный объём работ. В сводке указаны фактические списания и остаток пакета${hasPeriod ? ' на конец выбранного периода' : ''}.`}</p>
+  ${tasksHtml ? `<h2>Задачи${cabinet ? ` (${data.tasks.length})` : ''}</h2>${tasksHtml}` : ''}
   ${data.reportsWithoutTask.length ? `<h2>Отдельные работы</h2>${reportTable(data.reportsWithoutTask)}` : ''}
-  ${data.tasks.length === 0 && data.reportsWithoutTask.length === 0 ? `<p class="empty">${hasPeriod ? 'В выбранном периоде работ по этому пакету нет.' : 'В этом пакете пока нет задач и выполненных работ.'}</p>` : ''}
-  <div class="totals"><span>Всего списано из пакета</span><span>${escapeHtml(hours(data.spentHours))}</span></div>
+  ${data.tasks.length === 0 && data.reportsWithoutTask.length === 0 ? `<p class="empty">${cabinet ? hasPeriod ? 'В выбранном периоде работ по задачам нет.' : 'В кабинете клиента пока нет задач.' : hasPeriod ? 'В выбранном периоде работ по этому пакету нет.' : 'В этом пакете пока нет задач и выполненных работ.'}</p>` : ''}
+  <div class="totals"><span>${cabinet ? 'Всего выполнено' : 'Всего списано из пакета'}</span><span>${escapeHtml(hours(data.spentHours))}</span></div>
 </main></body></html>`
 }

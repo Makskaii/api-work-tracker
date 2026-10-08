@@ -8,7 +8,7 @@ import timezone from 'dayjs/plugin/timezone'
 import utc from 'dayjs/plugin/utc'
 import { InjectRepository } from '@nestjs/typeorm'
 import { DataSource, EntityManager, In, Repository } from 'typeorm'
-import { DailyReportCodes, EntityTypeIds, TaskCodes, TaskStageIds } from '../constants/const'
+import { DailyReportCodes, EntityTypeIds, ProjectCodes, TaskCodes, TaskStageIds } from '../constants/const'
 import { ReportProject, ReportProjectType } from '../project-reports/entities/project-report-project.entity'
 import { BitrixService } from '../shared/integrations/bitrix/bitrix.service'
 import { CreateSupportHoursPackageDto } from './dto/create-support-hours-package.dto'
@@ -61,6 +61,17 @@ type BitrixProject = {
   id: string | number
   title?: string
   [PROJECT_TYPE]?: string | string[] | number | null
+  [ProjectCodes.company]?: unknown
+}
+
+export type SupportPackageClientReportContext = {
+  packageId: number
+  purchaseDate: string
+  projectId: number
+  projectTitle: string
+  bitrixProjectId: string
+  companyId: number
+  companyTitle: string
 }
 
 type BitrixTask = {
@@ -146,6 +157,36 @@ export class SupportHoursPackagesService {
         })),
       }
     })
+  }
+
+  // Client presentation reads current CRM ownership without synchronizing or
+  // changing the support ledger. Older cached projects can have no company ID.
+  async getClientReportContext(packageId: number): Promise<SupportPackageClientReportContext> {
+    if (this.positiveId(packageId) === null) throw new BadRequestException('Выберите корректный пакет техподдержки')
+    const item = await this.packagesRepository.findOne({ where: { id: packageId }, relations: { project: true } })
+    if (!item) throw new NotFoundException('Пакет техподдержки не найден')
+    const projectId = this.positiveId(item.projectId)
+    const bitrixProjectId = this.positiveId(item.project?.bitrixProjectId)
+    if (projectId === null || bitrixProjectId === null || this.positiveId(item.project?.id) !== projectId) {
+      throw new BadRequestException('У проекта пакета нет корректной привязки к Битрикс24')
+    }
+    const sourceProject = await this.bitrixService.getItem<BitrixProject>({ entityTypeId: EntityTypeIds.projects, id: bitrixProjectId })
+    if (!sourceProject || this.positiveId(sourceProject.id) !== bitrixProjectId) {
+      throw new BadRequestException('Не удалось найти связанный проект пакета в Битрикс24')
+    }
+    const companyId = this.positiveId(sourceProject[ProjectCodes.company])
+    if (companyId === null) throw new BadRequestException('В карточке проекта Битрикс24 укажите компанию клиента')
+    const company = await this.bitrixService.getCompany<{ ID?: unknown; id?: unknown; TITLE?: unknown; title?: unknown }>(companyId)
+    if (!company || this.positiveId(company.ID ?? company.id) !== companyId) {
+      throw new BadRequestException('Не удалось найти компанию клиента из карточки проекта Битрикс24')
+    }
+    const title = company.TITLE ?? company.title
+    if (typeof title !== 'string' || !title.trim()) throw new BadRequestException('В карточке компании Битрикс24 укажите название клиента')
+    return {
+      packageId, purchaseDate: item.purchaseDate, projectId, bitrixProjectId: String(bitrixProjectId),
+      projectTitle: (typeof sourceProject.title === 'string' ? sourceProject.title.trim() : '') || item.project.title?.trim() || `Проект №${bitrixProjectId}`,
+      companyId, companyTitle: title.trim(),
+    }
   }
 
   async getReportSnapshot(packageId: number): Promise<SupportHoursPackageReportSnapshot> {

@@ -4,6 +4,8 @@ import timezone from 'dayjs/plugin/timezone'
 import utc from 'dayjs/plugin/utc'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { ClientsService, type CompanyReportPresentation } from '../clients/clients.service'
+import { ClientTaskStatuses, TaskCodes } from '../constants/const'
 import { PdfService } from '../shared/pdf/pdf.service'
 import {
   buildSupportPackageReportHtml,
@@ -13,7 +15,7 @@ import {
 import type { SupportHoursPackage } from './entities/support-hours-package.entity'
 import type { SupportHoursPackageReportSnapshot } from './support-hours-package-report.types'
 import { SupportHoursPackagesService } from './support-hours-packages.service'
-import { SupportPackageChecksService } from './support-package-checks.service'
+import { SupportClientWorkReaderService, type SupportClientWork } from './support-client-work-reader.service'
 import { validateSupportPackageReportScope, type SupportPackageReportScope } from './dto/download-support-package-report.dto'
 
 dayjs.extend(utc)
@@ -30,19 +32,22 @@ export function distributeSupportClientReportHours(rows: readonly SupportPackage
   if (agreedHours === null) return rows.map((row) => ({ ...row }))
   const cents = Math.round(agreedHours * 100)
   if (!Number.isSafeInteger(cents) || cents < 0) throw new BadRequestException('Некорректный объём часов задачи')
+  // Prefer readable tenths, retaining hundredths when the agreed total requires them.
+  const quantumCents = BigInt(cents % 10 === 0 ? 10 : 1)
+  const targetUnits = BigInt(cents) / quantumCents
   const weighted = rows.map((row, index) => {
     const weight = Math.round(hoursValue(row.hours) * 100)
     if (!Number.isSafeInteger(weight) || weight < 0) throw new BadRequestException('Некорректный объём часов работы')
-    return { row, index, weight: BigInt(weight), cents: 0n, remainder: 0n }
+    return { row, index, weight: BigInt(weight), units: 0n, remainder: 0n }
   })
   const totalWeight = weighted.reduce((sum, row) => sum + row.weight, 0n)
   if (totalWeight === 0n) return weighted.map(({ row }) => ({ ...row, hours: 0 }))
   for (const row of weighted) {
-    const share = BigInt(cents) * row.weight
-    row.cents = share / totalWeight
+    const share = targetUnits * row.weight
+    row.units = share / totalWeight
     row.remainder = share % totalWeight
   }
-  let remaining = BigInt(cents) - weighted.reduce((sum, row) => sum + row.cents, 0n)
+  let remaining = targetUnits - weighted.reduce((sum, row) => sum + row.units, 0n)
   const largestRemainders = [...weighted].sort((first, second) => {
     if (first.remainder !== second.remainder) return first.remainder > second.remainder ? -1 : 1
     return first.row.date.localeCompare(second.row.date)
@@ -51,10 +56,10 @@ export function distributeSupportClientReportHours(rows: readonly SupportPackage
   })
   for (const row of largestRemainders) {
     if (remaining === 0n) break
-    row.cents += 1n
+    row.units += 1n
     remaining -= 1n
   }
-  return weighted.map(({ row, cents: allocated }) => ({ ...row, hours: Number(allocated) / 100 }))
+  return weighted.map(({ row, units }) => ({ ...row, hours: Number(units * quantumCents) / 100 }))
 }
 
 export function buildSupportPackageReportData(item: SupportHoursPackage & Partial<Pick<SupportHoursPackageReportSnapshot, 'taskContexts'>>, now = new Date(), requestedScope?: SupportPackageReportScope): SupportPackageReportData {
@@ -202,21 +207,76 @@ export function buildSupportPackageReportData(item: SupportHoursPackage & Partia
   }
 }
 
+/** Use the cabinet's company task list and totals, independently of package charging. */
+export function buildSupportCabinetReportData(
+  context: { packageId: number; projectTitle: string; companyTitle: string; purchaseDate: string },
+  presentation: CompanyReportPresentation,
+  works: readonly SupportClientWork[],
+  now = new Date(),
+  requestedScope?: SupportPackageReportScope,
+): SupportPackageReportData {
+  const scope = validateSupportPackageReportScope(requestedScope, now)
+  if (presentation.purchasedHours === null) {
+    throw new BadRequestException('Укажите купленные часы в кабинете клиента перед формированием отчёта')
+  }
+  const rowsByTask = new Map<string, SupportPackageReportRow[]>()
+  const uniqueReports = new Set<string>()
+  const today = dayjs(now).tz(REPORT_TIMEZONE).format('YYYY-MM-DD')
+  for (const { taskId, row } of works) {
+    if (row.date > today || uniqueReports.has(row.id)) continue
+    uniqueReports.add(row.id)
+    const rows = rowsByTask.get(taskId) ?? []
+    rows.push({ ...row })
+    rowsByTask.set(taskId, rows)
+  }
+  const tasks = presentation.tasks.flatMap((task) => {
+    const reports = (rowsByTask.get(task.id) ?? []).sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id, undefined, { numeric: true }))
+    if (scope && !reports.some((row) => row.date >= scope.dateFrom && row.date <= scope.dateTo)) return []
+    const rawSold = task[TaskCodes.hours]
+    const parsedSold = typeof rawSold === 'string' ? Number(rawSold.trim().replace(',', '.')) : rawSold
+    const soldHours = rawSold == null || rawSold === '' || typeof parsedSold !== 'number' || !Number.isFinite(parsedSold) ? null : roundHours(parsedSold)
+    const completed = task.status === ClientTaskStatuses.done
+    return [{
+      id: task.id, title: task.title, status: completed ? 'completed' as const : 'in_work' as const,
+      soldHours, hours: soldHours ?? 0,
+      totalHours: roundHours(reports.reduce((sum, row) => sum + row.hours, 0)),
+      reports,
+      clientReports: completed ? distributeSupportClientReportHours(reports, soldHours) : [],
+      otherPackageReports: [],
+    }]
+  })
+  const completedIds = new Set(presentation.completedTaskIds)
+  return {
+    reportBasis: 'client_cabinet',
+    projectTitle: context.projectTitle, clientName: context.companyTitle,
+    packageId: context.packageId, purchaseDate: context.purchaseDate, asOfDate: today,
+    purchasedHours: presentation.purchasedHours, spentHours: presentation.completedHours,
+    remainingHours: roundHours(presentation.purchasedHours - presentation.completedHours),
+    completedTaskCount: presentation.completedTaskCount,
+    ...(scope ? {
+      dateFrom: scope.dateFrom, dateTo: scope.dateTo,
+      periodSpentHours: roundHours(tasks.filter((task) => completedIds.has(task.id)).reduce((sum, task) => sum + (task.soldHours ?? 0), 0)),
+    } : {}),
+    tasks, reportsWithoutTask: [],
+  }
+}
+
 @Injectable()
 export class SupportHoursPackageReportService {
   constructor(
     private readonly packagesService: SupportHoursPackagesService,
     private readonly pdfService: PdfService,
-    private readonly checksService: SupportPackageChecksService,
+    private readonly clientsService: ClientsService,
+    private readonly workReader: SupportClientWorkReaderService,
   ) {}
 
   async generate(packageId: number, requestedScope?: SupportPackageReportScope) {
     const now = new Date()
     const scope = validateSupportPackageReportScope(requestedScope, now)
-    const snapshot = await this.packagesService.getReportSnapshot(packageId)
-    const checks = await this.checksService.inspect(snapshot)
-    if (checks.blocking) throw new BadRequestException({ message: 'Исправьте принадлежность отчётов проекту перед выгрузкой', issues: checks.issues })
-    const data = buildSupportPackageReportData(snapshot, now, scope)
+    const context = await this.packagesService.getClientReportContext(packageId)
+    const presentation = await this.clientsService.getCompanyReportPresentation(context.companyId, now)
+    const works = await this.workReader.read(presentation.tasks.map((task) => task.id), now)
+    const data = buildSupportCabinetReportData(context, presentation, works, now, scope)
     const [logo, watermark] = await Promise.all([
       this.readBrandImage('logo.jpg'),
       this.readBrandImage('watermark.jpg'),
@@ -225,7 +285,7 @@ export class SupportHoursPackageReportService {
     const buffer = await this.pdfService.generatePdf(html, logo)
     const suffix = scope ? `${scope.dateFrom}-${scope.dateTo}` : data.asOfDate
     return { buffer, filename: `support-package-${packageId}-${suffix}.pdf`, snapshot: {
-      projectId: snapshot.projectId, projectTitle: data.projectTitle, clientName: data.clientName,
+      projectId: context.projectId, projectTitle: data.projectTitle, clientName: data.clientName,
       packageId: data.packageId, purchasedHours: data.purchasedHours, spentHours: data.spentHours, remainingHours: data.remainingHours,
     } }
   }

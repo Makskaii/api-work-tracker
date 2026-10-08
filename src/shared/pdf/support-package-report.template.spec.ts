@@ -9,6 +9,41 @@ const sample: SupportPackageReportData = {
 }
 
 describe('support package PDF content', () => {
+  it('renders cabinet totals and task count without claiming the completed budget is an actual package charge', () => {
+    const html = buildSupportPackageReportHtml({
+      ...sample, reportBasis: 'client_cabinet', purchasedHours: 65, spentHours: 62, remainingHours: 3,
+      tasks: Array.from({ length: 25 }, (_, index) => ({ ...sample.tasks[0], id: String(index), title: `Задача ${index}`, reports: [], clientReports: [], otherPackageReports: [] })),
+      reportsWithoutTask: [],
+    })
+    expect(html).toContain('Задачи (25)')
+    expect(html).toContain('<th>Куплено часов</th><th>Выполнено</th><th>Осталось</th>')
+    expect(html).toContain('<td>65 ч</td><td>62 ч</td><td class="">3 ч</td>')
+    expect(html).toContain('Задача 24')
+    expect(html).toContain('В процессе')
+    expect(html).not.toContain('Списано из пакета')
+    expect(html).not.toContain('Всего списано из пакета')
+    expect(html).not.toContain('Продано клиенту')
+    expect(html).not.toContain('Сохранены комментарии')
+    expect(html).not.toContain('Предыдущая работа')
+  })
+
+  it('labels period task volume separately from the overall current cabinet balance', () => {
+    const html = buildSupportPackageReportHtml({
+      ...sample, reportBasis: 'client_cabinet', dateFrom: '2026-09-10', dateTo: '2026-09-20', periodSpentHours: 30,
+      tasks: [{ ...sample.tasks[0], status: 'completed', clientReports: [
+        { id: '1', date: '2026-08-01', description: 'Работа до периода', hours: 1.7 },
+        { id: '2', date: '2026-09-15', description: 'Работа в периоде', hours: 28.3 },
+      ] }], reportsWithoutTask: [],
+    })
+    expect(html).toContain('Объём выполненных задач, попавших в период: <strong>30 ч</strong>')
+    expect(html).toContain('Сводка отражает общий текущий баланс.')
+    expect(html).toContain('Работа до периода')
+    expect(html).toContain('1,7 ч')
+    expect(html).not.toContain('01.08.2026')
+    expect(html).not.toContain('15.09.2026')
+    expect(html).not.toContain('Списано за выбранный период')
+  })
+
   it('shows unfinished task volume and status without exposing work descriptions or internal allocation details', () => {
     const html = buildSupportPackageReportHtml(sample)
     expect(html).toContain('Пакет №7')

@@ -151,6 +151,8 @@ export class HttpLoggingInterceptor implements NestInterceptor {
   private isSensitiveKey(key: string): boolean {
     const normalizedKey = key.toLowerCase()
 
+    if (['code', 'state', 'auth', 'auth_id', 'refresh_id', 'proof'].includes(normalizedKey)) return true
+
     return [
       'authorization',
       'cookie',

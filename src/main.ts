@@ -26,6 +26,7 @@ async function bootstrap() {
 
   app.enableCors({
     origin: getAllowedOrigins(FRONTEND_URL),
+    credentials: true,
   })
 
   const port = Number(process.env.PORT) || 3001

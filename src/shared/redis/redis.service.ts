@@ -103,6 +103,44 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** Consume single-use login state without a race between concurrent callbacks. */
+  async getDel(key: string): Promise<string | null> {
+    try {
+      return await this.client.getDel(key)
+    } catch {
+      throw new ServiceUnavailableException('Не удалось проверить одноразовое состояние входа')
+    }
+  }
+
+  async acquireLock(key: string, owner: string, ttlSeconds: number): Promise<boolean> {
+    try {
+      return await this.client.set(key, owner, { EX: ttlSeconds, NX: true }) === 'OK'
+    } catch {
+      throw new ServiceUnavailableException('Не удалось заблокировать обновление сессии')
+    }
+  }
+
+  async releaseLock(key: string, owner: string): Promise<void> {
+    try {
+      await this.client.eval("if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end", {
+        keys: [key], arguments: [owner],
+      })
+    } catch {
+      throw new ServiceUnavailableException('Не удалось завершить обновление сессии')
+    }
+  }
+
+  /** Never revive a session which was logged out while an upstream request ran. */
+  async compareAndSet(key: string, expected: string, value: string, ttlSeconds: number): Promise<boolean> {
+    try {
+      return Number(await this.client.eval("if redis.call('get', KEYS[1]) == ARGV[1] then redis.call('set', KEYS[1], ARGV[2], 'EX', ARGV[3]); return 1 else return 0 end", {
+        keys: [key], arguments: [expected, value, String(ttlSeconds)],
+      })) === 1
+    } catch {
+      throw new ServiceUnavailableException('Не удалось сохранить обновлённую сессию')
+    }
+  }
+
   async flushDb(): Promise<void> {
     try {
       await this.client.flushDb()
